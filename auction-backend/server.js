@@ -9,14 +9,12 @@ const doubleAuction = require("./auctions/double");
 
 const app = express();
 
-// ✅ 允许任意来源访问 API 请求
 app.use(cors({ origin: true, credentials: true }));
 
 app.use(express.json());
 
 const server = http.createServer(app);
 
-// ✅ Socket.io 允许所有域连接（或者你可以只保留你部署的前端域名）
 const io = new Server(server, {
   cors: {
     origin: "*", // 或写成：origin: ['http://localhost:5173', 'https://your-frontend.vercel.app']
