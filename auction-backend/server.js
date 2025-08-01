@@ -1,4 +1,3 @@
-// server.js
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
@@ -9,18 +8,19 @@ const sealedAuction = require("./auctions/sealed");
 const doubleAuction = require("./auctions/double");
 
 const app = express();
-app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5175', 'https://auction-zby2.onrender.com'],
-  methods: ['GET', 'POST'],
-  credentials: true
-}));
+
+// ✅ 允许任意来源访问 API 请求
+app.use(cors({ origin: true, credentials: true }));
+
 app.use(express.json());
 
 const server = http.createServer(app);
+
+// ✅ Socket.io 允许所有域连接（或者你可以只保留你部署的前端域名）
 const io = new Server(server, {
   cors: {
-    origin: ['http://localhost:5173', 'http://localhost:5175', 'https://auction-zby2.onrender.com'],
-    methods: ['GET', 'POST']
+    origin: "*", // 或写成：origin: ['http://localhost:5173', 'https://your-frontend.vercel.app']
+    methods: ["GET", "POST"]
   }
 });
 
@@ -54,20 +54,5 @@ io.on("connection", (socket) => {
 });
 
 server.listen(3001, () => {
-  console.log("Server running on http://localhost:3001");
+  console.log("✅ Server running on http://localhost:3001");
 });
-
-// auctions/english.js
-module.exports = (io, socket, rooms) => {
-  socket.on("join-english", ({ roomId }) => {
-    socket.join(roomId);
-    socket.on("place-bid", ({ roomId, amount }) => {
-      const room = rooms[roomId];
-      if (!room || room.type !== "english") return;
-      if (!room.currentPrice || amount > room.currentPrice) {
-        room.currentPrice = amount;
-        io.to(roomId).emit("bid-update", { currentPrice: amount });
-      }
-    });
-  });
-};
