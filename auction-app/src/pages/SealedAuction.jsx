@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
 
-const socket = io("http://localhost:3001");
+const socket = io("https://auction-zby2.onrender.com");
 
 function SealedAuction() {
   const { id: roomId } = useParams();

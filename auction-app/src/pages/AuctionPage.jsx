@@ -11,9 +11,9 @@ function AuctionPage() {
   const [type, setType] = useState(null);
 
   useEffect(() => {
-    axios.get('http://localhost:3001/auctions')
+    axios.get('https://auction-zby2.onrender.com/auctions')
       .then(res => {
-        const room = res.data.find(r => r.id === roomId);
+        const room = res.data.find(r => r.id.toString() === roomId);
         if (room) setType(room.type);
       });
   }, [roomId]);
