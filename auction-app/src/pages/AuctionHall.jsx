@@ -12,7 +12,7 @@ function AuctionHall() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    axios.get('https://auction-zby2.onrender.com/auctions')
+    axios.get('https://auction-backend-k44x.onrender.com/auctions')
       .then(res => setRooms(res.data))
       .catch(err => console.error('Failed to load rooms:', err));
   }, []);
@@ -21,7 +21,7 @@ function AuctionHall() {
   const handleCreateRoom = async () => {
     if (newRoomName.trim() === '') return;
     try {
-      const response = await axios.post('https://auction-zby2.onrender.com/auctions', {
+      const response = await axios.post('https://auction-backend-k44x.onrender.com/auctions', {
         name: newRoomName,
         type: newRoomType
       });
