@@ -1,36 +1,64 @@
 // auctions/double.js
 module.exports = (io, socket, rooms) => {
   socket.on("join-double", ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || (room.type || '').toLowerCase() !== "double") return;
+
     socket.join(roomId);
-    socket.on("submit-buy", ({ roomId, price }) => {
-      const room = rooms[roomId];
-      if (!room || room.type !== "double") return;
-      room.buys = room.buys || [];
-      room.buys.push({ id: socket.id, price });
-    });
-    socket.on("submit-sell", ({ roomId, price }) => {
-      const room = rooms[roomId];
-      if (!room || room.type !== "double") return;
-      room.sells = room.sells || [];
-      room.sells.push({ id: socket.id, price });
-    });
-    socket.on("match-double", ({ roomId }) => {
-      const room = rooms[roomId];
-      if (!room || room.type !== "double") return;
-      const match = findMatch(room.buys, room.sells);
-      io.to(roomId).emit("double-match", match);
-    });
+    room.buys = room.buys || [];
+    room.sells = room.sells || [];
+    room.trades = room.trades || [];
+  });
+
+  socket.on("submit-buy", ({ roomId, price }) => {
+    const room = rooms[roomId];
+    if (!room || (room.type || '').toLowerCase() !== "double") return;
+
+    const p = Number(price);
+    if (!Number.isFinite(p) || p <= 0) return;
+
+    const username = socket.username || `User-${socket.id.slice(0,4)}`;
+    room.buys.push({ username, price: p, time: new Date().toISOString() });
+
+    room.bidHistory = room.bidHistory || [];
+    room.bidHistory.push({ username, amount: p, time: new Date().toISOString(), side: "buy" });
+  });
+
+  socket.on("submit-sell", ({ roomId, price }) => {
+    const room = rooms[roomId];
+    if (!room || (room.type || '').toLowerCase() !== "double") return;
+
+    const p = Number(price);
+    if (!Number.isFinite(p) || p <= 0) return;
+
+    const username = socket.username || `User-${socket.id.slice(0,4)}`;
+    room.sells.push({ username, price: p, time: new Date().toISOString() });
+
+    room.bidHistory = room.bidHistory || [];
+    room.bidHistory.push({ username, amount: p, time: new Date().toISOString(), side: "sell" });
+  });
+
+  socket.on("match-double", ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room || (room.type || '').toLowerCase() !== "double") return;
+
+    const buys = (room.buys || []).slice().sort((a,b) => b.price - a.price);
+    const sells = (room.sells || []).slice().sort((a,b) => a.price - b.price);
+    const matches = [];
+
+    while (buys.length && sells.length && buys[0].price >= sells[0].price) {
+      const buy = buys.shift();
+      const sell = sells.shift();
+      const price = (buy.price + sell.price) / 2;
+
+      room.trades.push({ buyer: buy.username, seller: sell.username, price, time: new Date().toISOString() });
+      matches.push({ buyer: buy.username, seller: sell.username, price });
+    }
+
+    // 覆盖盘面
+    room.buys = buys;
+    room.sells = sells;
+
+    io.to(roomId).emit("double-match", matches); // 保持你原事件名
   });
 };
-
-function findMatch(buys, sells) {
-  buys.sort((a, b) => b.price - a.price);
-  sells.sort((a, b) => a.price - b.price);
-  const matches = [];
-  while (buys.length && sells.length && buys[0].price >= sells[0].price) {
-    const buy = buys.shift();
-    const sell = sells.shift();
-    matches.push({ buyer: buy.id, seller: sell.id, price: (buy.price + sell.price) / 2 });
-  }
-  return matches;
-}
