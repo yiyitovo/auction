@@ -24,7 +24,7 @@ function SealedAuction() {
     const onEnd = ({ winner }) => setWinner(winner || null);
     const onBudget = ({ cap }) => setMyCap(cap);
     const onRejected = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`密封出价超过你的上限：${cap}`);
+      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
       else alert('Bid rejected');
     };
 

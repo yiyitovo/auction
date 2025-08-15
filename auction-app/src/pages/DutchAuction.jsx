@@ -27,7 +27,7 @@ function DutchAuction() {
     };
     const onBudget = ({ cap }) => setMyCap(cap);
     const onRejected = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`接受的价格超过你的上限：${cap}`);
+      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ：${cap}`);
       else alert('Bid rejected');
     };
 

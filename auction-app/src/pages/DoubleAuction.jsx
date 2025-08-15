@@ -25,7 +25,7 @@ function DoubleAuction() {
     const onMatch = (matchList) => setMatches(matchList || []);
     const onBudget = ({ cap }) => setMyCap(cap);
     const onRejected = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`价格超过你的上限：${cap}`);
+      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
       else alert('Bid rejected');
     };
 

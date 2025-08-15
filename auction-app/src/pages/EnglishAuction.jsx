@@ -29,8 +29,8 @@ function EnglishAuction() {
     };
     const onBudget = ({ cap }) => setMyCap(cap);
     const onRejected = ({ reason, cap, curr }) => {
-      if (reason === 'OVER_BUDGET') alert(`出价超过你的上限：${cap}`);
-      else if (reason === 'INVALID_AMOUNT') alert(`无效出价，请高于当前价：${curr}`);
+      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
+      else if (reason === 'INVALID_AMOUNT') alert(`Amount must be greater than current price: ${curr}`);
       else alert('Bid rejected');
     };
 
