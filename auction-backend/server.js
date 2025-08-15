@@ -241,7 +241,7 @@ app.get("/auctions/:roomId/balances", (req, res) => {
 
 // =============== Socket.IO：通用 join-room + 四类拍卖 ===============
 io.on("connection", (socket) => {
-  // ✅ 覆盖：加入房间（识别房主、host 专房、room-info、加入动态）
+  // ✅ 覆盖：加入房间（识别用户名、如无则分配余额，并"私发"cap）
   socket.on("join-room", ({ roomId, username }) => {
     const room = rooms[roomId];
     if (!room) return;
@@ -250,44 +250,40 @@ io.on("connection", (socket) => {
     socket.username = username || `User-${socket.id.slice(0, 4)}`;
     socket.roomId = roomId;
 
-    // 首个进入者成为房主（若未显式指定）
-    if (!room.owner) room.owner = socket.username;
-    const isHost = socket.username === room.owner;
-    if (isHost) socket.join(`host:${roomId}`);
-
-    // 去重记录参与者
+    // 记录参与者（去重）
     if (!room.participants.find(p => p.socketId === socket.id)) {
       room.participants.push({ socketId: socket.id, username: socket.username });
     }
 
-    // 回传我的角色（前端可显示 Host 标签）
-    socket.emit('room-info', { roomId, owner: room.owner, isHost });
-
-    // 首次分配余额（保留你的逻辑）
+    // 如果还没有分配余额，按策略一次性分配
     if (Object.keys(room.balances).length === 0 && room.participants.length > 0) {
       const cfg = room.budgetConfig || {};
       const usernames = room.participants.map(p => p.username);
       room.balances = allocateBalances(usernames, cfg);
+
+      // 如需兼容旧逻辑，仍可广播完整 balances（房主用），参与者端不展示
       io.to(roomId).emit("balances-set", room.balances);
 
-      // 记录一次“设置余额”的动作
-      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'balances-set', actor: room.owner || 'system' });
+      // ⭐ 给当前房间内的每个在线 socket "私发"自己的 cap
+      io.in(roomId).fetchSockets().then(socketsInRoom => {
+        socketsInRoom.forEach(s => {
+          const cap = room.balances?.[s.username] ?? null;
+          s.emit('your-budget', { cap });
+        });
+      });
+    } else {
+      // ⭐ 已经分配过余额：直接给"当前加入者"私发 cap
+      const myCap = room.balances?.[socket.username] ?? null;
+      socket.emit('your-budget', { cap: myCap });
     }
 
-    // 记录“加入”
-    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'join', actor: socket.username });
+    // （如果你已经有审计/隐私层，可以顺便记一条“join”）
+    if (io.__privacy?.logAndBroadcast) {
+      io.__privacy.logAndBroadcast(io, rooms, roomId, { type: 'join', actor: socket.username });
+    }
   });
 
-  // ✅ 新增：断开时记录“离开”
-  socket.on('disconnect', () => {
-    const { roomId, username } = socket;
-    if (!roomId || !rooms[roomId]) return;
-    const room = rooms[roomId];
-    room.participants = room.participants.filter(p => p.socketId !== socket.id);
-    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
-  });
-
-  // 四类拍卖（保留）
+  // 其它拍卖模块
   englishAuction(io, socket, rooms);
   dutchAuction(io, socket, rooms);
   sealedAuction(io, socket, rooms);
