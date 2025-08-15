@@ -26,6 +26,7 @@ module.exports = (io, socket, rooms) => {
     room.currentPrice = p;
     room.status = "in-progress";
     io.to(roomId).emit("dutch-price", { price: p });
+    io.__privacy.logAndBroadcast(io, rooms, roomId, { type: 'clock', price: nextPrice }); // 无身份
   });
 
   // 你前端已有：接受当前价（传入 price）
@@ -51,6 +52,8 @@ module.exports = (io, socket, rooms) => {
     });
 
     io.to(roomId).emit("auction-ended", { winner: room.winner });
+    io.__privacy.logAndBroadcast(io, rooms, roomId, { type: 'clock', price: nextPrice }); // 无身份
+
   });
 
   // （可选）不带 price 的接受，取当前价

@@ -34,6 +34,10 @@ module.exports = (io, socket, rooms) => {
     });
 
     // 广播最新价格
-    io.to(roomId).emit("bid-update", { currentPrice: bidAmount });
+    // 1) 记录动态（房主真名、参与者半匿名）
+    io.__privacy.logAndBroadcast(io, rooms, roomId, { type: 'bid', actor: socket.username, amount: bidAmount });
+    // 2) 同步“当前价 + 最高出价者标签”（房主看到真名，参与者看到代号）
+    io.__privacy.emitBidUpdate(io, rooms, roomId, socket.username, bidAmount);
+
   });
 };

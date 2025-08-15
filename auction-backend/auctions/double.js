@@ -8,8 +8,11 @@ module.exports = (io, socket, rooms) => {
     room.buys = room.buys || [];
     room.sells = room.sells || [];
     room.trades = room.trades || [];
+    // 可选：标记状态
+    room.status = room.status || 'running';
   });
 
+  // ===== 买单 =====
   socket.on("submit-buy", ({ roomId, price }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -22,8 +25,14 @@ module.exports = (io, socket, rooms) => {
 
     room.bidHistory = room.bidHistory || [];
     room.bidHistory.push({ username, amount: p, time: new Date().toISOString(), side: "buy" });
+
+    // ⭐ 新增：挂单审计（房主真名，参与者半匿名）
+    io.__privacy.logAndBroadcast(io, rooms, roomId, {
+      type: 'order', actor: username, side: 'buy', price: p
+    });
   });
 
+  // ===== 卖单 =====
   socket.on("submit-sell", ({ roomId, price }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -36,8 +45,14 @@ module.exports = (io, socket, rooms) => {
 
     room.bidHistory = room.bidHistory || [];
     room.bidHistory.push({ username, amount: p, time: new Date().toISOString(), side: "sell" });
+
+    // ⭐ 新增：挂单审计
+    io.__privacy.logAndBroadcast(io, rooms, roomId, {
+      type: 'order', actor: username, side: 'sell', price: p
+    });
   });
 
+  // ===== 撮合 =====
   socket.on("match-double", ({ roomId }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -53,12 +68,20 @@ module.exports = (io, socket, rooms) => {
 
       room.trades.push({ buyer: buy.username, seller: sell.username, price, time: new Date().toISOString() });
       matches.push({ buyer: buy.username, seller: sell.username, price });
+
+      // ⭐ 新增：成交审计（记录买家视角；需要也可再发一条 seller 视角）
+      io.__privacy.logAndBroadcast(io, rooms, roomId, {
+        type: 'trade', actor: buy.username, price
+      });
+      // 可选：再记录卖家视角
+      // io.__privacy.logAndBroadcast(io, rooms, roomId, { type: 'trade', actor: sell.username, price });
     }
 
     // 覆盖盘面
     room.buys = buys;
     room.sells = sells;
 
-    io.to(roomId).emit("double-match", matches); // 保持你原事件名
+    // 保持你原事件名（业务 UI）
+    io.to(roomId).emit("double-match", matches);
   });
 };

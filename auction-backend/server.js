@@ -58,6 +58,99 @@ const io = new Server(server, {
  * }
  */
 const rooms = {};
+// ======= 身份标签（真名 / 半匿名 / 完全匿名） =======
+function hash(s){ let h=0; for(const c of s) h=((h<<5)-h)+c.charCodeAt(0)|0; return h; }
+function labelFor(room, username, audience) {
+  // audience: 'host' | 'participant'
+  if (audience === 'host') return username; // 房主始终真名
+  // 半匿名稳定代号
+  return 'X-' + (Math.abs(hash(username)) % 1000);
+}
+
+// ======= 隐私策略：不同机制、不同事件、不同观众 返回展示模式 =======
+// mode: 'public'(真名) | 'masked'(半匿名) | 'anonymous'(XXXX)
+// sealed 的收集/揭标通过 room.status 区分：'collecting' / 'reveal' / 'ended'
+function policy(room, evtType, audience) {
+  const t = room.type;
+  const st = room.status || 'waiting';
+  if (t === 'english') {
+    if (evtType === 'bid') return audience === 'host' ? 'public' : 'masked';
+    if (evtType === 'join' || evtType === 'leave') return audience === 'host' ? 'public' : 'anonymous';
+    return audience === 'host' ? 'public' : 'masked';
+  }
+  if (t === 'dutch') {
+    if (evtType === 'clock') return 'anonymous'; // 时钟更新无身份
+    if (evtType === 'accept') return audience === 'host' ? 'public' : 'masked';
+    return audience === 'host' ? 'public' : 'masked';
+  }
+  if (t === 'double') {
+    if (evtType === 'order' || evtType === 'trade') return audience === 'host' ? 'public' : 'masked';
+    return audience === 'host' ? 'public' : 'anonymous';
+  }
+  if (t === 'sealed') {
+    if (st === 'collecting') {
+      if (evtType === 'sealed-bid') return audience === 'host' ? 'public' : 'anonymous';
+      return audience === 'host' ? 'public' : 'anonymous';
+    }
+    // 揭标或结束阶段
+    if (evtType === 'reveal' || st === 'reveal' || st === 'ended') {
+      if (evtType === 'reveal' || evtType === 'win') return audience === 'host' ? 'public' : 'masked';
+    }
+    return audience === 'host' ? 'public' : 'anonymous';
+  }
+  // 兜底
+  return audience === 'host' ? 'public' : 'masked';
+}
+
+// ======= 生成“面向某观众”的事件视图（按策略屏蔽身份/金额） =======
+function viewFor(room, evt, audience) {
+  const mode = policy(room, evt.type, audience);
+  let actor;
+  if (mode === 'public') actor = evt.actor;
+  else if (mode === 'masked') actor = labelFor(room, evt.actor, audience);
+  else actor = 'XXXX';
+
+  const out = { ...evt, actor };
+
+  // sealed 收集阶段：参与者不看金额/细节
+  if (room.type === 'sealed' && (room.status || '') === 'collecting' && audience === 'participant') {
+    if (evt.type === 'sealed-bid') {
+      delete out.amount;
+      out.note = 'A sealed bid was received.';
+    }
+  }
+  // dutch 时钟：无身份
+  if (room.type === 'dutch' && evt.type === 'clock') delete out.actor;
+
+  return out;
+}
+
+// ======= 统一记录 + 广播（房主真名视图 / 参与者掩码视图） =======
+function logAndBroadcast(io, rooms, roomId, evt) {
+  const room = rooms[roomId];
+  if (!room) return;
+  const e = { ts: Date.now(), ...evt };     // evt: {type, actor, amount?...}
+  room.activity = room.activity || [];
+  room.activity.push(e);
+  if (room.activity.length > 5000) room.activity.shift();
+
+  io.to(roomId).emit('audit', viewFor(room, e, 'participant'));
+  io.to(`host:${roomId}`).emit('audit', viewFor(room, e, 'host'));
+}
+
+// ======= 辅助：同时更新“最高出价者标签” =======
+function emitBidUpdate(io, rooms, roomId, username, amount) {
+  const room = rooms[roomId]; if (!room) return;
+  io.to(roomId).emit('bid-update', {
+    currentPrice: amount,
+    highestBidder: labelFor(room, username, 'participant')
+  });
+  io.to(`host:${roomId}`).emit('bid-update', {
+    currentPrice: amount,
+    highestBidder: labelFor(room, username, 'host')
+  });
+}
+
 
 // =============== 登录 / 注册（保留你原来的） ===============
 app.post("/login", async (req, res) => {
@@ -201,6 +294,8 @@ function allocateBalances(
 }
 
 // =============== 启动 ===============
+attachPrivacyHelpers(io);
+
 server.listen(3001, () => {
   console.log("Server running on http://localhost:3001");
 });
