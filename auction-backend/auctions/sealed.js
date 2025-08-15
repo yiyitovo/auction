@@ -5,13 +5,12 @@ module.exports = (io, socket, rooms) => {
     if (!room || (room.type || '').toLowerCase() !== "sealed") return;
     socket.join(roomId);
 
-    // 收集阶段
     if (!room.status || room.status === 'waiting') {
       room.status = 'collecting';
     }
   });
 
-  // 提交密封标（收集阶段不向参与者公开金额与身份）
+  // 收集密封标
   socket.on("submit-bid", ({ roomId, amount }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "sealed") return;
@@ -21,7 +20,7 @@ module.exports = (io, socket, rooms) => {
 
     const username = socket.username || `User-${socket.id.slice(0,4)}`;
 
-    // ⭐ cap 校验（关键）
+    // ⭐ 硬校验 cap
     const cap = room.balances?.[username];
     if (cap != null && a > cap) {
       return socket.emit('bid-rejected', { reason: 'OVER_BUDGET', cap });
@@ -32,17 +31,10 @@ module.exports = (io, socket, rooms) => {
     if (idx >= 0) room.bids[idx] = { username, amount: a };
     else room.bids.push({ username, amount: a });
 
-    // 历史
     room.bidHistory = room.bidHistory || [];
-    room.bidHistory.push({
-      username, amount: a, time: new Date().toISOString(), action: "sealed-submit"
-    });
+    room.bidHistory.push({ username, amount: a, time: new Date().toISOString(), action: "sealed-submit" });
 
-    // 审计（参与者侧会自动隐藏金额与身份）
-    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, {
-      type: 'sealed-bid', actor: username, amount: a
-    });
-
+    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'sealed-bid', actor: username, amount: a });
     socket.emit("sealed-submitted", { ok: true });
   });
 
@@ -56,12 +48,8 @@ module.exports = (io, socket, rooms) => {
 
     room.status = 'reveal';
     if (winner) {
-      // 动态流里 reveal（参与者代号，房主真名）
-      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, {
-        type: 'reveal', actor: winner.username, amount: winner.amount
-      });
+      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'reveal', actor: winner.username, amount: winner.amount });
 
-      // 结束事件分流，保证前端一致
       const labelP = io.__privacy?.labelFor ? io.__privacy.labelFor(room, winner.username, 'participant') : winner.username;
       io.to(roomId).emit("auction-ended", { winner: { username: labelP, amount: winner.amount } });
       io.to(`host:${roomId}`).emit("auction-ended", { winner });

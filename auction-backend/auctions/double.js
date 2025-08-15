@@ -21,7 +21,7 @@ module.exports = (io, socket, rooms) => {
 
     const username = socket.username || `User-${socket.id.slice(0,4)}`;
 
-    // ⭐ cap 校验（关键）
+    // ⭐ 硬校验 cap
     const cap = room.balances?.[username];
     if (cap != null && p > cap) {
       return socket.emit('bid-rejected', { reason: 'OVER_BUDGET', cap });
@@ -31,10 +31,7 @@ module.exports = (io, socket, rooms) => {
     room.bidHistory = room.bidHistory || [];
     room.bidHistory.push({ username, amount: p, time: new Date().toISOString(), side: "buy" });
 
-    // 审计
-    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, {
-      type: 'order', actor: username, side: 'buy', price: p
-    });
+    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'order', actor: username, side: 'buy', price: p });
   });
 
   // 卖单
@@ -47,7 +44,7 @@ module.exports = (io, socket, rooms) => {
 
     const username = socket.username || `User-${socket.id.slice(0,4)}`;
 
-    // ⭐ cap 校验（关键）
+    // ⭐ 硬校验 cap
     const cap = room.balances?.[username];
     if (cap != null && p > cap) {
       return socket.emit('bid-rejected', { reason: 'OVER_BUDGET', cap });
@@ -57,10 +54,7 @@ module.exports = (io, socket, rooms) => {
     room.bidHistory = room.bidHistory || [];
     room.bidHistory.push({ username, amount: p, time: new Date().toISOString(), side: "sell" });
 
-    // 审计
-    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, {
-      type: 'order', actor: username, side: 'sell', price: p
-    });
+    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'order', actor: username, side: 'sell', price: p });
   });
 
   // 撮合
@@ -80,19 +74,14 @@ module.exports = (io, socket, rooms) => {
       room.trades.push({ buyer: buy.username, seller: sell.username, price, time: new Date().toISOString() });
       matches.push({ buyer: buy.username, seller: sell.username, price });
 
-      // 成交审计（买家视角；如需也可再发一条卖家视角）
-      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, {
-        type: 'trade', actor: buy.username, price
-      });
-      // 可选：再记一条卖家视角
+      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'trade', actor: buy.username, price });
+      // 如需也可加一条卖家视角日志：
       // io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'trade', actor: sell.username, price });
     }
 
-    // 覆盖盘面
     room.buys = buys;
     room.sells = sells;
 
-    // 业务事件
     io.to(roomId).emit("double-match", matches);
   });
 };

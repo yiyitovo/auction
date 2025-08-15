@@ -4,6 +4,7 @@ import Register from './pages/Register';
 import AuctionHall from './pages/AuctionHall';
 import BiddingInterface from './pages/BiddingInterface';
 import AuctionPage from './pages/AuctionPage';
+import CreateAuction from './pages/CreateAuction';
 import { AppBar, Toolbar, Button, Container } from '@mui/material';
 
 function App() {
@@ -20,6 +21,7 @@ function App() {
         <Routes>
           <Route path="/" element={<AuctionHall />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/create" element={<CreateAuction />} />  
           <Route path="/register" element={<Register />} />
           <Route path="/auction/:id" element={<AuctionPage />} />
         </Routes>

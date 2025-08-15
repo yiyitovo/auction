@@ -12,6 +12,8 @@ const sealedAuction  = require("./auctions/sealed");
 const doubleAuction  = require("./auctions/double");
 
 const User = require("./models/User");
+const jwt = require("jsonwebtoken");
+
 
 // =============== MongoDB ===============
 mongoose.connect(process.env.MONGODB_URI, {
@@ -67,6 +69,21 @@ function labelFor(room, username, audience) {
   // audience: 'host' | 'participant'
   if (audience === 'host') return username; // 房主始终真名
   return 'X-' + (Math.abs(hash(username)) % 1000); // 半匿名稳定代号
+}
+function requireTeacher(req, res, next) {
+  const hdr = req.headers.authorization || "";
+  const token = hdr.startsWith("Bearer ") ? hdr.slice(7) : null;
+  if (!token) return res.status(401).json({ message: "Auth required" });
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET || "dev_secret");
+    if (payload.role !== "teacher") {
+      return res.status(403).json({ message: "Teacher only" });
+    }
+    req.user = payload; // { id, username, role }
+    next();
+  } catch (e) {
+    return res.status(401).json({ message: "Invalid token" });
+  }
 }
 
 // ======= 隐私策略：不同机制、不同事件、不同观众 返回展示模式 =======
@@ -160,16 +177,17 @@ app.post("/login", async (req, res) => {
     if (!user || user.password !== password) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
+    const token = jwt.sign(
+      { id: user._id.toString(), username: user.username, role: user.role || "teacher" },
+      process.env.JWT_SECRET || "dev_secret",
+      { expiresIn: "7d" }
+    );
     res.json({
       success: true,
-      user: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        balance: user.balance
-      }
+      token,
+      user: { id: user._id, username: user.username, role: user.role || "teacher" }
     });
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -194,14 +212,12 @@ app.get("/auctions", (req, res) => {
 });
 
 // ⭐ 创建房间：由创建者确定房主
-app.post("/auctions", (req, res) => {
+app.post("/auctions", requireTeacher, (req, res) => {
   const {
     type,
     name,
-    ownerUsername,             // 前端传入：创建者昵称（房主）
-
-    // 预算配置（可传可不传）
-    budgetStrategy = "equal", // equal | random | asc | desc
+    // 可选：预算配置
+    budgetStrategy = "equal",
     baseAmount = 100,
     minAmount = 50,
     maxAmount = 150,
@@ -213,7 +229,7 @@ app.post("/auctions", (req, res) => {
     id,
     type,
     name,
-    owner: ownerUsername || null,   // ⭐ 确定房主
+    owner: req.user.username, // ⭐ 房主 = 登录的教师
     status: "waiting",
     participants: [],
     balances: {},
@@ -225,6 +241,7 @@ app.post("/auctions", (req, res) => {
   res.json(rooms[id]);
   io.emit("auction-created", rooms[id]);
 });
+
 
 // =============== 房主查看接口：出价记录 / 初始余额 / 活动流 ===============
 app.get("/auctions/:roomId/bids", (req, res) => {
@@ -243,6 +260,17 @@ app.get("/auctions/:roomId/activity", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ message: "Room not found" });
   res.json(room.activity || []);
+});
+app.get("/admin/auctions/:roomId/bids", requireTeacher, (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) return res.status(404).json({ message: "Room not found" });
+  res.json(room.bidHistory || []);
+});
+
+app.get("/admin/auctions/:roomId/balances", requireTeacher, (req, res) => {
+  const room = rooms[req.params.roomId];
+  if (!room) return res.status(404).json({ message: "Room not found" });
+  res.json(room.balances || {});
 });
 
 // =============== Socket.IO：join-room + 四类拍卖 ===============
