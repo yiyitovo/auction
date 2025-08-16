@@ -12,6 +12,7 @@ function SealedAuction() {
   const [myCap, setMyCap] = useState(null);
   const [bid, setBid] = useState('');
   const [winner, setWinner] = useState(null);
+  const [isHost, setIsHost] = useState(false); // ★ 仅教师显示揭标按钮
 
   useEffect(() => {
     let name = localStorage.getItem('username');
@@ -27,18 +28,33 @@ function SealedAuction() {
       if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
       else alert('Bid rejected');
     };
+    const onForbidden = ({ action, reason }) => {
+      if (action === 'reveal-bids' && reason === 'HOST_ONLY') {
+        alert('Only the teacher (host) can reveal the winner.');
+      }
+    };
+    const onYouAreHost = ({ roomId: rid, isHost }) => {
+      if (rid === roomId) setIsHost(!!isHost);
+    };
 
     socket.on('auction-ended', onEnd);
     socket.on('your-budget', onBudget);
     socket.on('bid-rejected', onRejected);
+    socket.on('forbidden', onForbidden);
+    socket.on('you-are-host', onYouAreHost);
 
     socket.emit('join-room', { roomId, username: name });
     socket.emit('join-sealed', { roomId });
+
+    // 询问自己是不是 host（教师）
+    socket.emit('am-i-host', { roomId });
 
     return () => {
       socket.off('auction-ended', onEnd);
       socket.off('your-budget', onBudget);
       socket.off('bid-rejected', onRejected);
+      socket.off('forbidden', onForbidden);
+      socket.off('you-are-host', onYouAreHost);
     };
   }, [roomId]);
 
@@ -68,7 +84,9 @@ function SealedAuction() {
       />
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={handleSubmitBid} style={{ flex: 1, padding: 10 }}>Submit Bid</button>
-        <button onClick={handleReveal} style={{ flex: 1, padding: 10 }}>Reveal Winner</button>
+        {isHost && (
+          <button onClick={handleReveal} style={{ flex: 1, padding: 10 }}>Reveal Winner</button>
+        )}
       </div>
 
       <div style={{ marginTop: 12 }}>
