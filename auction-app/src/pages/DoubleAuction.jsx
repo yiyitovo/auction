@@ -10,9 +10,10 @@ function DoubleAuction() {
   const { id: roomId } = useParams();
   const [username, setUsername] = useState('');
   const [myCap, setMyCap] = useState(null);
-  const [buyPrice, setBuyPrice] = useState('');
-  const [sellPrice, setSellPrice] = useState('');
+  const [role, setRole] = useState(''); // '', 'buy', 'sell'
+  const [price, setPrice] = useState('');
   const [matches, setMatches] = useState([]);
+  const [isHost, setIsHost] = useState(false);
 
   useEffect(() => {
     let name = localStorage.getItem('username');
@@ -25,36 +26,56 @@ function DoubleAuction() {
     const onMatch = (matchList) => setMatches(matchList || []);
     const onBudget = ({ cap }) => setMyCap(cap);
     const onRejected = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
-      else alert('Bid rejected');
+      if (reason === 'OVER_BUDGET') alert(`Buy price exceeds your cap: ${cap}`);
+      else alert('Order rejected');
+    };
+    const onForbidden = ({ action, reason }) => {
+      if (reason === 'HOST_ONLY' && action === 'match-double') {
+        alert('Only the teacher (host) can match.');
+      } else if (reason === 'ROLE_MISMATCH') {
+        alert('Please choose the correct role before submitting.');
+      }
+    };
+    const onYouAreHost = ({ roomId: rid, isHost }) => {
+      if (rid === roomId) setIsHost(!!isHost);
+    };
+    const onRoleUpdated = ({ roomId: rid, role }) => {
+      if (rid === roomId) setRole(role);
     };
 
     socket.on('double-match', onMatch);
     socket.on('your-budget', onBudget);
     socket.on('bid-rejected', onRejected);
+    socket.on('forbidden', onForbidden);
+    socket.on('you-are-host', onYouAreHost);
+    socket.on('role-updated', onRoleUpdated);
 
     socket.emit('join-room', { roomId, username: name });
     socket.emit('join-double', { roomId });
+    socket.emit('am-i-host', { roomId });
 
     return () => {
       socket.off('double-match', onMatch);
       socket.off('your-budget', onBudget);
       socket.off('bid-rejected', onRejected);
+      socket.off('forbidden', onForbidden);
+      socket.off('you-are-host', onYouAreHost);
+      socket.off('role-updated', onRoleUpdated);
     };
   }, [roomId]);
 
-  const handleSubmitBuy = () => {
-    const p = Number(buyPrice);
-    if (!Number.isFinite(p) || p <= 0) return;
-    socket.emit('submit-buy', { roomId, price: p });
-    setBuyPrice('');
+  const chooseRole = (r) => {
+    setRole(r);
+    setPrice('');
+    socket.emit('set-role', { roomId, role: r });
   };
 
-  const handleSubmitSell = () => {
-    const p = Number(sellPrice);
+  const handleSubmit = () => {
+    const p = Number(price);
     if (!Number.isFinite(p) || p <= 0) return;
-    socket.emit('submit-sell', { roomId, price: p });
-    setSellPrice('');
+    if (role === 'buy') socket.emit('submit-buy', { roomId, price: p });
+    else if (role === 'sell') socket.emit('submit-sell', { roomId, price: p });
+    setPrice('');
   };
 
   const handleMatch = () => {
@@ -65,43 +86,51 @@ function DoubleAuction() {
     <div style={{ maxWidth: 560, margin: '16px auto' }}>
       <h2>Double Auction</h2>
       <p><b>User:</b> {username}</p>
-      <p><b>My Cap:</b> {myCap ?? '—'}</p>
+      <p><b>My Cap (buyers):</b> {myCap ?? '—'}</p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
-        <div>
-          <input
-            type="number"
-            value={buyPrice}
-            onChange={(e) => setBuyPrice(e.target.value)}
-            placeholder="Buy Price"
-            style={{ width: '100%', padding: 8, marginBottom: 8 }}
-          />
-          <button onClick={handleSubmitBuy} style={{ width: '100%', padding: 10 }}>
-            Submit Buy
-          </button>
-        </div>
-        <div>
-          <input
-            type="number"
-            value={sellPrice}
-            onChange={(e) => setSellPrice(e.target.value)}
-            placeholder="Sell Price"
-            style={{ width: '100%', padding: 8, marginBottom: 8 }}
-          />
-          <button onClick={handleSubmitSell} style={{ width: '100%', padding: 10 }}>
-            Submit Sell
-          </button>
-        </div>
+      {/* 角色选择 */}
+      <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
+        <button
+          onClick={() => chooseRole('buy')}
+          style={{ flex: 1, padding: 10, background: role==='buy' ? '#e5f0ff' : '' }}
+        >
+          I am a Buyer
+        </button>
+        <button
+          onClick={() => chooseRole('sell')}
+          style={{ flex: 1, padding: 10, background: role==='sell' ? '#e5f0ff' : '' }}
+        >
+          I am a Seller
+        </button>
       </div>
 
-      <button onClick={handleMatch} style={{ width: '100%', padding: 10, marginBottom: 12 }}>
-        Match
-      </button>
+      {/* 输入意愿价，仅显示与角色对应的一栏 */}
+      <div style={{ marginBottom: 12 }}>
+        <input
+          type="number"
+          value={price}
+          onChange={(e) => setPrice(e.target.value)}
+          placeholder={role === 'sell' ? "Ask Price" : role === 'buy' ? "Bid Price" : "Choose a role first"}
+          disabled={!role}
+          style={{ width: '100%', padding: 8, marginBottom: 8 }}
+        />
+        <button onClick={handleSubmit} disabled={!role} style={{ width: '100%', padding: 10 }}>
+          Submit {role === 'sell' ? 'Ask' : role === 'buy' ? 'Bid' : 'Order'}
+        </button>
+      </div>
+
+      {/* Match 仅教师端可见 */}
+      {isHost && (
+        <button onClick={handleMatch} style={{ width: '100%', padding: 10, marginBottom: 12 }}>
+          Match (Host Only)
+        </button>
+      )}
 
       <div>
         <h4>Matches</h4>
-        {(matches || []).map((m, index) => (
-          <p key={index}>Buyer: {m.buyer}, Seller: {m.seller}, Price: {m.price}</p>
+        {(matches || []).length === 0 && <p>No matches yet.</p>}
+        {(matches || []).map((m, i) => (
+          <p key={i}>Buyer: {m.buyer}, Seller: {m.seller}, Price: {m.price}</p>
         ))}
       </div>
     </div>
