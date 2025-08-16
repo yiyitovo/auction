@@ -15,6 +15,14 @@ module.exports = (io, socket, rooms) => {
     );
   }
 
+  // 教师加入 host 专用房间（前端用 ?host=1 触发）
+  socket.on("join-host", ({ roomId }) => {
+    const room = rooms[roomId];
+    if (!room) return;
+    socket.join(`host:${roomId}`);
+    socket.emit("you-are-host", { roomId, isHost: true });
+  });
+
   socket.on("join-double", ({ roomId }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -51,7 +59,7 @@ module.exports = (io, socket, rooms) => {
     socket.emit("role-updated", { roomId, role });
   });
 
-  // 买单（仅当角色为 buy 才允许；价格受 cap 限制；每人仅保留一个最新意愿价）
+  // 买方提交意愿价（仅当角色为 buy）
   socket.on("submit-buy", ({ roomId, price }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -83,7 +91,7 @@ module.exports = (io, socket, rooms) => {
     socket.emit("order-accepted", { side: 'buy', price: p });
   });
 
-  // 卖单（仅当角色为 sell 才允许；不做 cap 校验；每人仅保留一个最新意愿价）
+  // 卖方提交意愿价（仅当角色为 sell）
   socket.on("submit-sell", ({ roomId, price }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -110,6 +118,7 @@ module.exports = (io, socket, rooms) => {
   });
 
   // 教师端手动撮合（仅 host 可触发）
+  // 成交价采用：卖方报价（ask price），不取折中价
   socket.on("match-double", ({ roomId }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "double") return;
@@ -125,7 +134,7 @@ module.exports = (io, socket, rooms) => {
     while (buys.length && sells.length && buys[0].price >= sells[0].price) {
       const buy = buys.shift();
       const sell = sells.shift();
-      const price = (buy.price + sell.price) / 2;
+      const price = sell.price; // ← 成交价 = 卖方报价，不是折中
 
       const now = new Date().toISOString();
       room.trades.push({ buyer: buy.username, seller: sell.username, price, time: now });
@@ -140,12 +149,13 @@ module.exports = (io, socket, rooms) => {
 
     // 向参与者端广播匿名结果；向教师端广播真实结果
     const pub = matches.map(m => {
-      const buyerP = io.__privacy?.labelFor ? io.__privacy.labelFor(room, m.buyer, 'participant') : m.buyer;
-      const sellerP = io.__privacy?.labelFor ? io.__privacy.labelFor(room, m.seller, 'participant') : m.seller;
+      const roomRef = rooms[roomId];
+      const buyerP = io.__privacy?.labelFor ? io.__privacy.labelFor(roomRef, m.buyer, 'participant') : m.buyer;
+      const sellerP = io.__privacy?.labelFor ? io.__privacy.labelFor(roomRef, m.seller, 'participant') : m.seller;
       return { buyer: buyerP, seller: sellerP, price: m.price, time: m.time };
     });
 
-    io.to(roomId).emit("double-match", pub);                 // 匿名
-    io.to(`host:${roomId}`).emit("double-match", matches);   // 真实
+    io.to(roomId).emit("double-match", pub);               // 匿名给所有参与者
+    io.to(`host:${roomId}`).emit("double-match", matches); // 真实给教师端
   });
 };

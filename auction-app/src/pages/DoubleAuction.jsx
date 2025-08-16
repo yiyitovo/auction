@@ -33,7 +33,7 @@ function DoubleAuction() {
       if (reason === 'HOST_ONLY' && action === 'match-double') {
         alert('Only the teacher (host) can match.');
       } else if (reason === 'ROLE_MISMATCH') {
-        alert('Please choose the correct role before submitting.');
+        alert('Please choose your role (Buyer/Seller) first.');
       }
     };
     const onYouAreHost = ({ roomId: rid, isHost }) => {
@@ -53,6 +53,13 @@ function DoubleAuction() {
     socket.emit('join-room', { roomId, username: name });
     socket.emit('join-double', { roomId });
     socket.emit('am-i-host', { roomId });
+
+    // 老师端：在链接带 ?host=1 时，自动申请 host 权限
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('host') === '1') {
+      socket.emit('join-host', { roomId });
+      setTimeout(() => socket.emit('am-i-host', { roomId }), 50);
+    }
 
     return () => {
       socket.off('double-match', onMatch);
@@ -88,7 +95,7 @@ function DoubleAuction() {
       <p><b>User:</b> {username}</p>
       <p><b>My Cap (buyers):</b> {myCap ?? '—'}</p>
 
-      {/* 角色选择 */}
+      {/* 角色选择（普通用户必须先选） */}
       <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
         <button
           onClick={() => chooseRole('buy')}
@@ -104,13 +111,17 @@ function DoubleAuction() {
         </button>
       </div>
 
-      {/* 输入意愿价，仅显示与角色对应的一栏 */}
+      {/* 仅显示与角色对应的一栏 */}
       <div style={{ marginBottom: 12 }}>
         <input
           type="number"
           value={price}
           onChange={(e) => setPrice(e.target.value)}
-          placeholder={role === 'sell' ? "Ask Price" : role === 'buy' ? "Bid Price" : "Choose a role first"}
+          placeholder={
+            role === 'sell' ? "Ask Price" :
+            role === 'buy'  ? "Bid Price" :
+            "Choose a role first"
+          }
           disabled={!role}
           style={{ width: '100%', padding: 8, marginBottom: 8 }}
         />
@@ -119,7 +130,7 @@ function DoubleAuction() {
         </button>
       </div>
 
-      {/* Match 仅教师端可见 */}
+      {/* Match 仅教师端可见（普通用户不会显示） */}
       {isHost && (
         <button onClick={handleMatch} style={{ width: '100%', padding: 10, marginBottom: 12 }}>
           Match (Host Only)
