@@ -13,6 +13,8 @@ const doubleAuction  = require("./auctions/double");
 
 const User = require("./models/User");
 const jwt = require("jsonwebtoken");
+const jwt = require("jsonwebtoken");
+
 
 
 // =============== MongoDB ===============
