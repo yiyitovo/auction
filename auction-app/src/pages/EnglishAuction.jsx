@@ -1,4 +1,4 @@
-// src/pages/EnglishAuction.jsx
+// src/pages/EnglishAuction.jsx — order-only
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -13,12 +13,11 @@ function EnglishAuction() {
   const [myName, setMyName] = useState('');
   const [myCap, setMyCap] = useState(null);
   const [currentPrice, setCurrentPrice] = useState(null);
-  const [highestBidder, setHighestBidder] = useState(null); // 实名
+  const [highestBidder, setHighestBidder] = useState(null);
   const [bid, setBid] = useState('');
-  const [orders, setOrders] = useState([]);                 // ← price / name / time
+  const [orders, setOrders] = useState([]); // [{price,name,time}]
   const [ended, setEnded] = useState(false);
   const [winner, setWinner] = useState(null);
-  const [isHost, setIsHost] = useState(false);
 
   useEffect(() => {
     let username = localStorage.getItem('username');
@@ -38,22 +37,19 @@ function EnglishAuction() {
       else if (reason === 'INVALID_AMOUNT') alert(`Amount must be greater than current price: ${curr}`);
       else alert('Bid rejected');
     };
-    const onOrders = (list) => setOrders(Array.isArray(list) ? list : []);
-    const onEnded = ({ winner }) => {
-      setEnded(true);
-      setWinner(winner || null);
-    };
-    const onRoomInfo = ({ isHost }) => setIsHost(!!isHost);
+    const onOrders = (list) => { if (Array.isArray(list)) setOrders(list); };
+    const onEnded = ({ winner }) => { setEnded(true); setWinner(winner || null); };
 
     socket.on('bid-update', onBidUpdate);
     socket.on('your-budget', onBudget);
     socket.on('bid-rejected', onRejected);
-    socket.on('order', onOrders);            // ← 监听新事件名
+    socket.on('order', onOrders);        // 只监听 order
     socket.on('english-ended', onEnded);
-    socket.on('room-info', onRoomInfo);
 
     socket.emit('join-room', { roomId, username });
     socket.emit('join-english', { roomId });
+
+    console.log('[English] FE listening: order only');
 
     return () => {
       socket.off('bid-update', onBidUpdate);
@@ -61,7 +57,6 @@ function EnglishAuction() {
       socket.off('bid-rejected', onRejected);
       socket.off('order', onOrders);
       socket.off('english-ended', onEnded);
-      socket.off('room-info', onRoomInfo);
     };
   }, [roomId]);
 
@@ -78,7 +73,7 @@ function EnglishAuction() {
 
   const handleExit = () => {
     socket.emit('leave-room', { roomId });
-    navigate('/'); // 返回 Auction Hall
+    navigate('/');
   };
 
   return (
@@ -88,7 +83,7 @@ function EnglishAuction() {
         <button onClick={handleExit} style={{ padding: '8px 12px' }}>Exit</button>
       </div>
 
-      <p><b>User:</b> {myName} {isHost && <span style={{ marginLeft: 8, color: '#888' }}>(Host)</span>}</p>
+      <p><b>User:</b> {myName}</p>
       <p><b>My Cap:</b> {myCap ?? '—'}</p>
       <p><b>Current Price:</b> {currentPrice ?? 'No bid yet'}</p>
       <p><b>Highest Bidder:</b> {highestBidder ?? '—'}</p>
