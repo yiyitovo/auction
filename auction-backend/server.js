@@ -213,17 +213,20 @@ app.get("/auctions", (req, res) => {
   res.json(Object.values(rooms));
 });
 
-// ⭐ 创建房间：由创建者确定房主
+// ⭐ 创建房间：由创建者确定房主 + English 配置
 app.post("/auctions", requireTeacher, (req, res) => {
   const {
     type,
     name,
-    // 可选：预算配置
+    // 预算配置（与 English 起拍价独立）
     budgetStrategy = "equal",
     baseAmount = 100,
     minAmount = 50,
     maxAmount = 150,
     step = 10,
+    // English 专用配置
+    englishBase = 0,          // 起拍价
+    englishNoBidSec = 0       // 无人加价自动结束秒数
   } = req.body;
 
   const id = Date.now().toString();
@@ -240,9 +243,20 @@ app.post("/auctions", requireTeacher, (req, res) => {
     activity: []
   };
 
+  if ((type || '').toLowerCase() === 'english') {
+    rooms[id].english = {
+      baseAmount: Number(englishBase) || 0,
+      noBidAutoEndSec: Number(englishNoBidSec) || 0,
+      _timer: null
+    };
+    rooms[id].currentPrice = Number(englishBase) || 0;
+    rooms[id].highestBidder = null;
+  }
+
   res.json(rooms[id]);
   io.emit("auction-created", rooms[id]);
 });
+
 
 
 // =============== 房主查看接口：出价记录 / 初始余额 / 活动流 ===============
@@ -314,6 +328,15 @@ io.on("connection", (socket) => {
       }
       room.balances[socket.username] = cap;
     }
+    // 允许主动退出房间（前端 Exit 按钮调用）
+    socket.on('leave-room', ({ roomId }) => {
+      const room = rooms[roomId];
+      if (!room) return;
+      socket.leave(roomId);
+      room.participants = (room.participants || []).filter(p => p.socketId !== socket.id);
+      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: socket.username || 'Unknown' });
+    });
+
 
     // 只私发给本人：显示 My Cap
     socket.emit("your-budget", { cap: room.balances[socket.username] });
