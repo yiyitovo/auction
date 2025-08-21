@@ -1,24 +1,20 @@
-// src/pages/DutchAuction.jsx — v2025-08-17
+// src/pages/DoubleAuction.jsx — force choose Buyer/Seller; hide Match for non-host
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
-import { Box, Typography, Button, Stack, Alert, Divider } from '@mui/material';
 
 const BACKEND_URL = "https://auction-backend-k44x.onrender.com";
 const socket = io(BACKEND_URL);
 
-function DutchAuction() {
+function DoubleAuction() {
   const { id: roomId } = useParams();
-
   const [username, setUsername] = useState('');
   const [myCap, setMyCap] = useState(null);
-  const [currentPrice, setCurrentPrice] = useState(null);
-  const [cfg, setCfg] = useState({ step: 1, intervalMs: 1000, minPrice: 0, intervalSec: 1 });
-  const [status, setStatus] = useState('waiting');
+  const [buyPrice, setBuyPrice] = useState('');
+  const [sellPrice, setSellPrice] = useState('');
+  const [matches, setMatches] = useState([]);
+  const [side, setSide] = useState(null);     // 'buy' | 'sell' | null
   const [isHost, setIsHost] = useState(false);
-  const [isTeacher, setIsTeacher] = useState(false);
-  const [budgets, setBudgets] = useState([]); // [{name,cap}]
-  const [msg, setMsg] = useState('');
 
   useEffect(() => {
     let name = localStorage.getItem('username');
@@ -27,168 +23,132 @@ function DutchAuction() {
       localStorage.setItem('username', name);
     }
     setUsername(name);
-    setIsTeacher((localStorage.getItem('role') || '') === 'teacher');
 
-    // 监听
-    const onDutchPrice = ({ price }) => setCurrentPrice(price);
-    const onEnd = ({ winner }) => {
-      alert(winner ? `Winner: ${winner.username} @ ${winner.price}` : 'No winner');
-    };
-    const onState = ({ status, cfg }) => {
-      if (cfg) setCfg({
-        step: Number(cfg.step || 1),
-        intervalMs: Number(cfg.intervalMs || 1000),
-        minPrice: Number(cfg.minPrice ?? 0),
-        intervalSec: Math.max(1, Math.round((Number(cfg.intervalMs || 1000)) / 1000))
-      });
-      setStatus(status || 'waiting');
-      setMsg(status === 'in-progress' ? 'Clock running...' : status === 'paused' ? 'Paused' : status || '');
+    const onMatch = (matchList) => setMatches(matchList || []);
+    const onBudget = ({ cap }) => setMyCap(cap);
+    const onRejected = ({ reason, cap }) => {
+      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
+      else if (reason === 'NO_SIDE') alert('Please choose Buyer or Seller first.');
+      else if (reason === 'SIDE_MISMATCH') alert('You selected the opposite side. Change your role or submit on the chosen side.');
+      else alert('Rejected');
     };
     const onRoomInfo = ({ isHost }) => setIsHost(!!isHost);
-    const onRejected = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`Your budget (${cap}) is less than current price.`);
-      else if (reason === 'NOT_STARTED') alert('The auction has not started yet.');
-      else alert('Rejected.');
-    };
-    const onBudgetMine = ({ cap }) => setMyCap(cap);
-    const onBudgetList = ({ budgets }) => setBudgets(Array.isArray(budgets) ? budgets : []);
+    const onSideAck = ({ side }) => setSide(side || null);
 
-    socket.on('dutch-price', onDutchPrice);
-    socket.on('auction-ended', onEnd);
-    socket.on('dutch-state', onState);
-    socket.on('room-info', onRoomInfo);
+    socket.on('double-match', onMatch);
+    socket.on('your-budget', onBudget);
     socket.on('bid-rejected', onRejected);
-    socket.on('your-budget', onBudgetMine);
-    socket.on('budget-list', onBudgetList);
+    socket.on('room-info', onRoomInfo);
+    socket.on('double-side-set', onSideAck);     // ack for role choosing
+    socket.on('double-side', onSideAck);         // state sync on join
 
-    // 入房
     socket.emit('join-room', { roomId, username: name });
-    socket.emit('join-dutch', { roomId });
+    socket.emit('join-double', { roomId });
 
     return () => {
-      socket.off('dutch-price', onDutchPrice);
-      socket.off('auction-ended', onEnd);
-      socket.off('dutch-state', onState);
-      socket.off('room-info', onRoomInfo);
+      socket.off('double-match', onMatch);
+      socket.off('your-budget', onBudget);
       socket.off('bid-rejected', onRejected);
-      socket.off('your-budget', onBudgetMine);
-      socket.off('budget-list', onBudgetList);
+      socket.off('room-info', onRoomInfo);
+      socket.off('double-side-set', onSideAck);
+      socket.off('double-side', onSideAck);
     };
   }, [roomId]);
 
-  // ===== 学生/所有人：接受当前价（无需输入金额） =====
-  const handleAccept = () => {
-    socket.emit('accept-price', { roomId });
+  const chooseSide = (s) => {
+    setSide(s);
+    socket.emit('double-set-side', { roomId, side: s }); // 告知后端锁定角色
   };
 
-  // ===== 房主（老师）配置时钟 =====
-  const [startPrice, setStartPrice] = React.useState('');
-  const [step, setStep] = React.useState(1);
-  const [intervalSec, setIntervalSec] = React.useState(1);
-  const [minPrice, setMinPrice] = React.useState(0);
-
-  const canControl = isTeacher && isHost;
-
-  const applyConfig = () => {
-    const sPrice = Number(startPrice);
-    const sStep = Number(step);
-    const sSec = Number(intervalSec);
-    const sMin = Number(minPrice);
-    if (!Number.isFinite(sPrice) || sPrice <= 0) { alert('Invalid start price'); return; }
-    if (!Number.isFinite(sStep) || sStep <= 0) { alert('Invalid step'); return; }
-    if (!Number.isFinite(sSec)  || sSec  <= 0) { alert('Invalid interval seconds'); return; }
-    socket.emit('dutch-config', {
-      roomId,
-      startPrice: sPrice,
-      step: sStep,
-      intervalSec: sSec,
-      minPrice: Number.isFinite(sMin) && sMin >=0 ? sMin : 0
-    });
+  const handleSubmitBuy = () => {
+    const p = Number(buyPrice);
+    if (!Number.isFinite(p) || p <= 0) return;
+    socket.emit('submit-buy', { roomId, price: p });
+    setBuyPrice('');
   };
 
-  const startClock = () => socket.emit('dutch-start', { roomId });
-  const stopClock  = () => socket.emit('dutch-stop', { roomId });
+  const handleSubmitSell = () => {
+    const p = Number(sellPrice);
+    if (!Number.isFinite(p) || p <= 0) return;
+    socket.emit('submit-sell', { roomId, price: p });
+    setSellPrice('');
+  };
+
+  const handleMatch = () => socket.emit('match-double', { roomId });
 
   return (
-    <Box sx={{ maxWidth: 820, mx: 'auto', mt: 4, p: 2 }}>
-      <Typography variant="h5" gutterBottom>Dutch Auction</Typography>
+    <div style={{ maxWidth: 560, margin: '16px auto' }}>
+      <h2>Double Auction</h2>
+      <p><b>User:</b> {username}</p>
+      <p><b>My Cap:</b> {myCap ?? '—'}</p>
 
-      <Stack direction="row" spacing={3} sx={{ mb: 2 }} alignItems="center">
-        <Typography><b>User:</b> {username}</Typography>
-        <Typography><b>My Cap:</b> {myCap ?? '—'}</Typography>
-        <Typography><b>Current Price:</b> {currentPrice ?? 'Not set'}</Typography>
-        {msg && <Alert severity={status==='in-progress' ? 'success' : 'info'}>{msg}</Alert>}
-      </Stack>
+      {/* 角色二选一 */}
+      <div style={{ display: 'flex', gap: 16, margin: '12px 0' }}>
+        <label>
+          <input
+            type="radio"
+            name="side"
+            checked={side === 'buy'}
+            onChange={() => chooseSide('buy')}
+          /> Buyer
+        </label>
+        <label>
+          <input
+            type="radio"
+            name="side"
+            checked={side === 'sell'}
+            onChange={() => chooseSide('sell')}
+          /> Seller
+        </label>
+      </div>
 
-      {/* 预算列表（所有人可见） */}
-      <Box sx={{ border: '1px solid #eee', borderRadius: 1, p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom>Budgets</Typography>
-        {budgets.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">No participants yet.</Typography>
-        ) : (
-          <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 1fr', rowGap: 0.5 }}>
-            <Typography sx={{ fontWeight: 600 }}>Name</Typography>
-            <Typography sx={{ fontWeight: 600 }}>Cap</Typography>
-            <Divider sx={{ gridColumn: '1 / -1', my: 1 }} />
-            {budgets.map((b, i) => (
-              <React.Fragment key={i}>
-                <Typography>{b.name}</Typography>
-                <Typography>{b.cap}</Typography>
-              </React.Fragment>
-            ))}
-          </Box>
-        )}
-      </Box>
-
-      {/* 老师（房主）控制区 */}
-      {canControl && (
-        <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 2, mb: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>Clock Configuration (Teacher Only)</Typography>
-          <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
-            <input
-              type="number" placeholder="Start Price"
-              value={startPrice} onChange={(e)=>setStartPrice(e.target.value)}
-              style={{ flex: 1, padding: 8 }}
-            />
-            <input
-              type="number" placeholder="Drop Step"
-              value={step} onChange={(e)=>setStep(e.target.value)}
-              style={{ flex: 1, padding: 8 }}
-            />
-            <input
-              type="number" placeholder="Interval (sec)"
-              value={intervalSec} onChange={(e)=>setIntervalSec(e.target.value)}
-              style={{ flex: 1, padding: 8 }}
-            />
-            <input
-              type="number" placeholder="Min Price (floor)"
-              value={minPrice} onChange={(e)=>setMinPrice(e.target.value)}
-              style={{ flex: 1, padding: 8 }}
-            />
-          </Stack>
-          <Stack direction="row" spacing={2}>
-            <Button variant="outlined" onClick={applyConfig}>Apply</Button>
-            <Button variant="contained" onClick={startClock}>Start</Button>
-            <Button variant="outlined" color="warning" onClick={stopClock}>Stop</Button>
-          </Stack>
-          <Typography variant="caption" sx={{ mt: 1, display: 'block', color: 'text.secondary' }}>
-            Current cfg: drop {cfg.step} every {Math.round((cfg.intervalMs||1000)/1000)}s, floor {cfg.minPrice}
-          </Typography>
-        </Box>
+      {/* 只显示所选一侧的输入与按钮 */}
+      {side === 'buy' && (
+        <div>
+          <input
+            type="number"
+            value={buyPrice}
+            onChange={(e) => setBuyPrice(e.target.value)}
+            placeholder="Buy Price"
+            style={{ width: '100%', padding: 8, marginBottom: 8 }}
+          />
+          <button onClick={handleSubmitBuy} style={{ width: '100%', padding: 10 }}>
+            Submit Buy
+          </button>
+        </div>
       )}
 
-      {/* 学生端/所有人：直接接受“当前价” */}
-      <Stack direction="row" spacing={2}>
-        <Button
-          variant="contained"
-          onClick={handleAccept}
-          disabled={status !== 'in-progress' || !Number.isFinite(Number(currentPrice))}
-        >
-          Accept Current Price
-        </Button>
-      </Stack>
-    </Box>
+      {side === 'sell' && (
+        <div>
+          <input
+            type="number"
+            value={sellPrice}
+            onChange={(e) => setSellPrice(e.target.value)}
+            placeholder="Sell Price"
+            style={{ width: '100%', padding: 8, marginBottom: 8 }}
+          />
+          <button onClick={handleSubmitSell} style={{ width: '100%', padding: 10 }}>
+            Submit Sell
+          </button>
+        </div>
+      )}
+
+      {/* 只有教师/房主能看到 Match */}
+      {isHost && (
+        <button onClick={handleMatch} style={{ width: '100%', padding: 10, marginTop: 12 }}>
+          Match (Teacher Only)
+        </button>
+      )}
+
+      <div style={{ marginTop: 16 }}>
+        <h4>Matches</h4>
+        {(matches || []).length === 0 && <p>No trades yet.</p>}
+        {(matches || []).map((m, index) => (
+          <p key={index}>Buyer: {m.buyer}, Seller: {m.seller}, Price: {m.price}</p>
+        ))}
+      </div>
+    </div>
   );
 }
 
-export default DutchAuction;
+export default DoubleAuction;

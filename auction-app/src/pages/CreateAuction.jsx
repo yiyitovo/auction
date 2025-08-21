@@ -17,7 +17,7 @@ function CreateAuction() {
 
   const [name, setName] = useState('');
   const [type, setType] = useState('english'); // 小写
-  const [budgetStrategy, setBudgetStrategy] = useState('equal'); // equal | random | asc | desc
+  const [budgetStrategy, setBudgetStrategy] = useState('equal'); // equal | random | asc
   const [baseAmount, setBaseAmount] = useState(100);
   const [minAmount, setMinAmount] = useState(50);
   const [maxAmount, setMaxAmount] = useState(150);
@@ -43,25 +43,24 @@ function CreateAuction() {
 
     try {
       const body = {
-        type, name,
-        budgetStrategy,
+        type,
+        name,
+        budgetStrategy,                 // 直接使用（已无 desc 选项）
         baseAmount: Number(baseAmount),
         minAmount: Number(minAmount),
         maxAmount: Number(maxAmount)
       };
+
       const res = await fetch(`${API_BASE}/auctions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` // 受保护路由
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(body)
       });
       const data = await res.json();
-      if (!res.ok) {
-        setMsg(data?.message || 'Create failed');
-        return;
-      }
+      if (!res.ok) { setMsg(data?.message || 'Create failed'); return; }
       navigate(pathFor(data));
     } catch {
       setMsg('Network error');
@@ -116,7 +115,7 @@ function CreateAuction() {
           <MenuItem value="equal">Equal (everyone same)</MenuItem>
           <MenuItem value="random">Random (min~max)</MenuItem>
           <MenuItem value="asc">Ascending (by join order)</MenuItem>
-          <MenuItem value="desc">Descending (by join order)</MenuItem>
+          {/* Descending 已移除 */}
         </Select>
       </FormControl>
 
