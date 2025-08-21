@@ -213,20 +213,20 @@ app.get("/auctions", (req, res) => {
   res.json(Object.values(rooms));
 });
 
-// ⭐ 创建房间：由创建者确定房主 + English 配置
+// 创建房间（只支持 equal | random | asc）
 app.post("/auctions", requireTeacher, (req, res) => {
   const {
     type,
     name,
-    // 预算配置（与 English 起拍价独立）
-    budgetStrategy = "equal",
+    // 预算配置（无 desc）
+    budgetStrategy = "equal",   // equal | random | asc
     baseAmount = 100,
     minAmount = 50,
     maxAmount = 150,
     step = 10,
-    // English 专用配置
-    englishBase = 0,          // 起拍价
-    englishNoBidSec = 0       // 无人加价自动结束秒数
+    // English 专用配置（如需）
+    englishBase = 0,
+    englishNoBidSec = 0
   } = req.body;
 
   const id = Date.now().toString();
@@ -234,7 +234,7 @@ app.post("/auctions", requireTeacher, (req, res) => {
     id,
     type,
     name,
-    owner: req.user.username, // ⭐ 房主 = 登录的教师
+    owner: req.user.username,
     status: "waiting",
     participants: [],
     balances: {},
@@ -256,6 +256,7 @@ app.post("/auctions", requireTeacher, (req, res) => {
   res.json(rooms[id]);
   io.emit("auction-created", rooms[id]);
 });
+
 
 
 
@@ -291,7 +292,7 @@ app.get("/admin/auctions/:roomId/balances", requireTeacher, (req, res) => {
 
 // =============== Socket.IO：join-room + 四类拍卖 ===============
 io.on("connection", (socket) => {
-  // ✅ 加入房间：根据“创建者”为房主；每个加入者都拿到自己的 cap
+  // ✅ 加入房间
   socket.on("join-room", ({ roomId, username }) => {
     const room = rooms[roomId];
     if (!room) return;
@@ -304,39 +305,29 @@ io.on("connection", (socket) => {
     if (isHost) socket.join(`host:${roomId}`);
 
     // 记录参与者（去重）
+    room.participants = room.participants || [];
     if (!room.participants.find(p => p.socketId === socket.id)) {
       room.participants.push({ socketId: socket.id, username: socket.username });
     }
 
-    // ⭐ 每个加入者都确保得到自己的 cap（不再只分给第一批）
+    // ⭐ 分配预算（仅 equal / random / asc）
     room.balances = room.balances || {};
-    const cfg = room.budgetConfig || { budgetStrategy: "equal", baseAmount: 100, minAmount: 50, maxAmount: 150, step: 10 };
+    const cfg = room.budgetConfig || {
+      budgetStrategy: "equal", baseAmount: 100, minAmount: 50, maxAmount: 150, step: 10
+    };
+    const bs = String(cfg.budgetStrategy || "equal").toLowerCase();
 
     if (room.balances[socket.username] == null) {
-      const count = Object.keys(room.balances).length; // 用于 asc/desc
-      let cap;
-      switch ((cfg.budgetStrategy || "equal").toLowerCase()) {
-        case "equal":  cap = Number(cfg.baseAmount); break;
-        case "random":{
-          const lo = Number(cfg.minAmount), hi = Number(cfg.maxAmount);
-          cap = Math.floor(Math.random() * (hi - lo + 1)) + lo;
-          break;
-        }
-        case "asc":    cap = Number(cfg.baseAmount) + count * Number(cfg.step || 1); break;
-        case "desc":   cap = Math.max(0, Number(cfg.baseAmount) - count * Number(cfg.step || 1)); break;
-        default:       cap = Number(cfg.baseAmount);
+      const count = Object.keys(room.balances).length; // 用于 asc
+      let cap = Number(cfg.baseAmount);                // 默认 equal
+      if (bs === "random") {
+        const lo = Number(cfg.minAmount), hi = Number(cfg.maxAmount);
+        cap = Math.floor(Math.random() * (hi - lo + 1)) + lo;
+      } else if (bs === "asc") {
+        cap = Number(cfg.baseAmount) + count * Number(cfg.step || 1);
       }
       room.balances[socket.username] = cap;
     }
-    // 允许主动退出房间（前端 Exit 按钮调用）
-    socket.on('leave-room', ({ roomId }) => {
-      const room = rooms[roomId];
-      if (!room) return;
-      socket.leave(roomId);
-      room.participants = (room.participants || []).filter(p => p.socketId !== socket.id);
-      io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: socket.username || 'Unknown' });
-    });
-
 
     // 只私发给本人：显示 My Cap
     socket.emit("your-budget", { cap: room.balances[socket.username] });
@@ -346,6 +337,18 @@ io.on("connection", (socket) => {
 
     // 记录加入动态
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'join', actor: socket.username });
+  });
+
+  // ✅ 更安全的退出：一次注册，用 socket.roomId，不信任客户端传入
+  socket.on('leave-room', () => {
+    const { roomId, username } = socket;
+    if (!roomId) return;
+    const room = rooms[roomId];
+    if (!room) return;
+
+    socket.leave(roomId);
+    room.participants = (room.participants || []).filter(p => p.socketId !== socket.id);
+    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
   });
 
   // 四类拍卖
@@ -361,6 +364,7 @@ io.on("connection", (socket) => {
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
   });
 });
+
 
 // =============== 启动 ===============
 server.listen(3001, () => {
