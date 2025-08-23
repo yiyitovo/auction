@@ -14,9 +14,6 @@ const doubleAuction  = require("./auctions/double");
 const User = require("./models/User");
 const jwt = require("jsonwebtoken");
 
-
-
-
 // =============== MongoDB ===============
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
@@ -31,8 +28,8 @@ app.use(cors({
   origin: [
     "http://localhost:5173",
     "http://localhost:5175",
-    "https://auction-sooty.vercel.app",   // 你的前端 Vercel
-    "https://auction-zby2.onrender.com"   // 如仍需要
+    "https://auction-sooty.vercel.app",
+    "https://auction-zby2.onrender.com"
   ],
   methods: ["GET", "POST"],
   credentials: true
@@ -65,12 +62,11 @@ const io = new Server(server, {
  */
 const rooms = {};
 
-// ======= 身份标签（真名 / 半匿名 / 完全匿名） =======
+// ======= 身份标签 / 权限 =======
 function hash(s){ let h=0; for(const c of s) h=((h<<5)-h)+c.charCodeAt(0)|0; return h; }
 function labelFor(room, username, audience) {
-  // audience: 'host' | 'participant'
-  if (audience === 'host') return username; // 房主始终真名
-  return 'X-' + (Math.abs(hash(username)) % 1000); // 半匿名稳定代号
+  if (audience === 'host') return username;
+  return 'X-' + (Math.abs(hash(username)) % 1000);
 }
 function requireTeacher(req, res, next) {
   const hdr = req.headers.authorization || "";
@@ -88,7 +84,7 @@ function requireTeacher(req, res, next) {
   }
 }
 
-// ======= 隐私策略：不同机制、不同事件、不同观众 返回展示模式 =======
+// ======= 隐私策略 =======
 function policy(room, evtType, audience) {
   const t = (room.type || '').toLowerCase();
   const st = room.status || 'waiting';
@@ -98,7 +94,7 @@ function policy(room, evtType, audience) {
     return audience === 'host' ? 'public' : 'masked';
   }
   if (t === 'dutch') {
-    if (evtType === 'clock') return 'anonymous'; // 时钟无身份
+    if (evtType === 'clock') return 'anonymous';
     if (evtType === 'accept') return audience === 'host' ? 'public' : 'masked';
     return audience === 'host' ? 'public' : 'masked';
   }
@@ -118,8 +114,6 @@ function policy(room, evtType, audience) {
   }
   return audience === 'host' ? 'public' : 'masked';
 }
-
-// ======= 生成面向某观众的事件视图 =======
 function viewFor(room, evt, audience) {
   const mode = policy(room, evt.type, audience);
   let actor;
@@ -127,7 +121,6 @@ function viewFor(room, evt, audience) {
   else if (mode === 'masked') actor = labelFor(room, evt.actor, audience);
   else actor = 'XXXX';
   const out = { ...evt, actor };
-
   if (room.type === 'sealed' && (room.status || '') === 'collecting' && audience === 'participant') {
     if (evt.type === 'sealed-bid') {
       delete out.amount;
@@ -135,11 +128,8 @@ function viewFor(room, evt, audience) {
     }
   }
   if (room.type === 'dutch' && evt.type === 'clock') delete out.actor;
-
   return out;
 }
-
-// ======= 统一记录 + 广播 =======
 function logAndBroadcast(io, rooms, roomId, evt) {
   const room = rooms[roomId];
   if (!room) return;
@@ -147,12 +137,9 @@ function logAndBroadcast(io, rooms, roomId, evt) {
   room.activity = room.activity || [];
   room.activity.push(e);
   if (room.activity.length > 5000) room.activity.shift();
-
   io.to(roomId).emit('audit', viewFor(room, e, 'participant'));
   io.to(`host:${roomId}`).emit('audit', viewFor(room, e, 'host'));
 }
-
-// ======= English 专用最高出价者标签 =======
 function emitBidUpdate(io, rooms, roomId, username, amount) {
   const room = rooms[roomId]; if (!room) return;
   io.to(roomId).emit('bid-update', {
@@ -164,14 +151,12 @@ function emitBidUpdate(io, rooms, roomId, username, amount) {
     highestBidder: labelFor(room, username, 'host')
   });
 }
-
-// ======= 挂到 io 上 =======
 function attachPrivacyHelpers(io) {
   io.__privacy = { logAndBroadcast, emitBidUpdate, labelFor, viewFor, policy };
 }
 attachPrivacyHelpers(io);
 
-// =============== 登录 / 注册（可选用） ===============
+// =============== 登录 / 注册 ===============
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -193,13 +178,11 @@ app.post("/login", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
 app.post("/register", async (req, res) => {
   const { username, password, role } = req.body;
   try {
     const existingUser = await User.findOne({ username });
     if (existingUser) return res.status(400).json({ message: "Username already exists" });
-
     const newUser = new User({ username, password, role });
     await newUser.save();
     res.json({ success: true });
@@ -213,7 +196,7 @@ app.get("/auctions", (req, res) => {
   res.json(Object.values(rooms));
 });
 
-// 创建房间（只支持 equal | random | asc）
+// ⭐ 创建房间（equal | random | asc）+ Double/Sealed 配置
 app.post("/auctions", requireTeacher, (req, res) => {
   const {
     type,
@@ -224,9 +207,12 @@ app.post("/auctions", requireTeacher, (req, res) => {
     minAmount = 50,
     maxAmount = 150,
     step = 10,
-    // English 专用配置（如需）
+    // English（可选）
     englishBase = 0,
-    englishNoBidSec = 0
+    englishNoBidSec = 0,
+    // 新增：Double/Sealed
+    doubleMode = "integrated",  // integrated | dynamic
+    sealedPricing = "first"     // first | second
   } = req.body;
 
   const id = Date.now().toString();
@@ -243,7 +229,10 @@ app.post("/auctions", requireTeacher, (req, res) => {
     activity: []
   };
 
-  if ((type || '').toLowerCase() === 'english') {
+  const t = (type || '').toLowerCase();
+
+  // English 初始化
+  if (t === 'english') {
     rooms[id].english = {
       baseAmount: Number(englishBase) || 0,
       noBidAutoEndSec: Number(englishNoBidSec) || 0,
@@ -253,26 +242,38 @@ app.post("/auctions", requireTeacher, (req, res) => {
     rooms[id].highestBidder = null;
   }
 
+  // Double：保存匹配模式 + 初始化订单簿
+  if (t === 'double') {
+    const mode = String(doubleMode || 'integrated').toLowerCase() === 'dynamic' ? 'dynamic' : 'integrated';
+    rooms[id].double = { mode };
+    rooms[id].buys   = [];
+    rooms[id].sells  = [];
+    rooms[id].trades = [];
+    rooms[id].roles  = {}; // { [username]: 'buy' | 'sell' }
+  }
+
+  // Sealed：保存定价规则
+  if (t === 'sealed') {
+    const pricing = String(sealedPricing || 'first').toLowerCase() === 'second' ? 'second' : 'first';
+    rooms[id].sealedCfg = { pricing };
+    rooms[id].bids = [];
+  }
+
   res.json(rooms[id]);
   io.emit("auction-created", rooms[id]);
 });
 
-
-
-
-// =============== 房主查看接口：出价记录 / 初始余额 / 活动流 ===============
+// =============== 房主查看接口 ===============
 app.get("/auctions/:roomId/bids", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ message: "Room not found" });
   res.json(room.bidHistory || []);
 });
-
 app.get("/auctions/:roomId/balances", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ message: "Room not found" });
   res.json(room.balances || {});
 });
-
 app.get("/auctions/:roomId/activity", (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ message: "Room not found" });
@@ -283,7 +284,6 @@ app.get("/admin/auctions/:roomId/bids", requireTeacher, (req, res) => {
   if (!room) return res.status(404).json({ message: "Room not found" });
   res.json(room.bidHistory || []);
 });
-
 app.get("/admin/auctions/:roomId/balances", requireTeacher, (req, res) => {
   const room = rooms[req.params.roomId];
   if (!room) return res.status(404).json({ message: "Room not found" });
@@ -332,20 +332,19 @@ io.on("connection", (socket) => {
     // 只私发给本人：显示 My Cap
     socket.emit("your-budget", { cap: room.balances[socket.username] });
 
-    // 告诉前端谁是房主（可用于显示 Host 标签）
+    // 告诉前端谁是房主
     socket.emit('room-info', { roomId, owner: room.owner, isHost });
 
     // 记录加入动态
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'join', actor: socket.username });
   });
 
-  // ✅ 更安全的退出：一次注册，用 socket.roomId，不信任客户端传入
+  // ✅ 安全退出
   socket.on('leave-room', () => {
     const { roomId, username } = socket;
     if (!roomId) return;
     const room = rooms[roomId];
     if (!room) return;
-
     socket.leave(roomId);
     room.participants = (room.participants || []).filter(p => p.socketId !== socket.id);
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
@@ -364,7 +363,6 @@ io.on("connection", (socket) => {
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
   });
 });
-
 
 // =============== 启动 ===============
 server.listen(3001, () => {
