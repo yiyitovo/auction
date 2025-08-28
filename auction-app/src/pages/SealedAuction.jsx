@@ -1,7 +1,8 @@
-// src/pages/SealedAuction.jsx — v2025-08-17
+// src/pages/SealedAuction.jsx — one-bid, EN instructions, show pricing & phases
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
+import { Box, Typography, Alert, Button, Divider } from '@mui/material';
 
 const BACKEND_URL = "https://auction-backend-k44x.onrender.com";
 const socket = io(BACKEND_URL);
@@ -10,11 +11,16 @@ function SealedAuction() {
   const { id: roomId } = useParams();
   const [username, setUsername] = useState('');
   const [myCap, setMyCap] = useState(null);
-  const [bid, setBid] = useState('');
-  const [winner, setWinner] = useState(null);
-  const [isHost, setIsHost] = useState(false);
   const [pricing, setPricing] = useState('first'); // 'first' | 'second'
-  const [orders, setOrders] = useState([]);        // 教师端可见 [{price,name,time}]
+  const [status, setStatus] = useState('collecting'); // collecting | reveal | ended
+
+  const [bid, setBid] = useState('');
+  const [mySubmitted, setMySubmitted] = useState(false);
+  const [mySubmittedAmount, setMySubmittedAmount] = useState(null);
+
+  const [isHost, setIsHost] = useState(false);
+  const [orders, setOrders] = useState([]); // host-only [{price,name,time}]
+  const [winner, setWinner] = useState(null);
 
   useEffect(() => {
     let name = localStorage.getItem('username');
@@ -24,119 +30,171 @@ function SealedAuction() {
     }
     setUsername(name);
 
-    const onEnd = ({ winner }) => setWinner(winner || null);
+    // listeners
     const onBudget = ({ cap }) => setMyCap(cap);
-    const onRejected = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
-      else if (reason === 'NOT_STARTED') alert('Not started yet.');
-      else alert('Bid rejected');
+    const onState = ({ status, pricing }) => {
+      if (status) setStatus(status);
+      if (pricing) setPricing(pricing);
     };
-    const onForbidden = ({ action, reason }) => {
-      if (action === 'reveal-bids' && reason === 'HOST_ONLY') alert('Only the teacher (host) can reveal the winner.');
-      if (action === 'sealed-config' && reason === 'HOST_ONLY') alert('Only the teacher (host) can set pricing.');
+    const onYouAreHost = ({ roomId: rid, isHost }) => {
+      if (rid === roomId) setIsHost(!!isHost);
     };
-    const onYouAreHost = ({ roomId: rid, isHost }) => { if (rid === roomId) setIsHost(!!isHost); };
-    const onState = ({ status, pricing }) => { if (pricing) setPricing(pricing); };
     const onOrders = (list) => { if (Array.isArray(list)) setOrders(list); };
 
-    socket.on('auction-ended', onEnd);
-    socket.on('your-budget', onBudget);
-    socket.on('bid-rejected', onRejected);
-    socket.on('forbidden', onForbidden);
-    socket.on('you-are-host', onYouAreHost);
-    socket.on('sealed-state', onState);
-    socket.on('order', onOrders);             // 仅教师端会收到
+    const onSubmitted = ({ ok }) => {
+      if (ok) {
+        setMySubmitted(true);
+        setMySubmittedAmount(Number(bid));
+        alert('Your sealed bid has been received. You cannot submit again.');
+        setBid('');
+      }
+    };
 
+    const onRejected = ({ reason, cap }) => {
+      if (reason === 'OVER_BUDGET') alert(`Your bid exceeds your budget (My Cap = ${cap}).`);
+      else if (reason === 'ALREADY_BID') alert('You already submitted a bid. Only one bid is allowed.');
+      else if (reason === 'NOT_STARTED') alert('Bidding has not started yet.');
+      else alert('Bid rejected.');
+    };
+
+    const onEnd = ({ winner }) => {
+      setWinner(winner || null);
+    };
+
+    socket.on('your-budget', onBudget);
+    socket.on('sealed-state', onState);
+    socket.on('you-are-host', onYouAreHost);
+    socket.on('order', onOrders);               // host-only
+    socket.on('sealed-submitted', onSubmitted); // ack
+    socket.on('bid-rejected', onRejected);
+    socket.on('auction-ended', onEnd);
+
+    // join room
     socket.emit('join-room', { roomId, username: name });
     socket.emit('join-sealed', { roomId });
-
-    // 询问自己是不是 host（教师）
     socket.emit('am-i-host', { roomId });
 
     return () => {
-      socket.off('auction-ended', onEnd);
       socket.off('your-budget', onBudget);
-      socket.off('bid-rejected', onRejected);
-      socket.off('forbidden', onForbidden);
-      socket.off('you-are-host', onYouAreHost);
       socket.off('sealed-state', onState);
+      socket.off('you-are-host', onYouAreHost);
       socket.off('order', onOrders);
+      socket.off('sealed-submitted', onSubmitted);
+      socket.off('bid-rejected', onRejected);
+      socket.off('auction-ended', onEnd);
     };
-  }, [roomId]);
+  }, [roomId, bid]);
 
+  // === student submit ===
   const handleSubmitBid = () => {
     const a = parseFloat(bid);
     if (!Number.isFinite(a) || a <= 0) return;
     socket.emit('submit-bid', { roomId, amount: a });
-    setBid('');
   };
 
+  // === teacher reveal ===
   const handleReveal = () => {
     socket.emit('reveal-bids', { roomId });
   };
 
-  const handleSetPricing = (p) => {
-    setPricing(p);
-    socket.emit('sealed-config', { roomId, pricing: p });
-  };
+  // Phase hint
+  const phaseHint =
+    status === 'collecting' ? 'Collecting sealed bids…'
+    : status === 'reveal'   ? 'Revealing winner…'
+    : status === 'ended'    ? 'Auction ended.'
+    : status || '';
 
   return (
-    <div style={{ maxWidth: 760, margin: '16px auto' }}>
-      <h2>Sealed Bid Auction</h2>
-      <p><b>User:</b> {username}</p>
-      <p><b>My Cap:</b> {myCap ?? '—'}</p>
+    <Box sx={{ maxWidth: 820, mx: 'auto', mt: 4, p: 2 }}>
+      <Typography variant="h5" gutterBottom>Sealed Bid Auction</Typography>
 
-      {/* 教师端：定价模式切换 + 揭标 */}
-      {isHost && (
-        <div style={{ padding: 10, border: '1px solid #eee', borderRadius: 6, marginBottom: 12 }}>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8 }}>
-            <span><b>Pricing:</b></span>
-            <label>
-              <input type="radio" name="pricing" checked={pricing==='first'} onChange={()=>handleSetPricing('first')} /> First-Price
-            </label>
-            <label>
-              <input type="radio" name="pricing" checked={pricing==='second'} onChange={()=>handleSetPricing('second')} /> Second-Price
-            </label>
-            <button onClick={handleReveal} style={{ marginLeft: 'auto', padding: '6px 10px' }}>
-              Reveal Winner (Host)
-            </button>
-          </div>
+      {/* Student-facing instructions */}
+      <Alert severity="info" sx={{ mb: 2 }}>
+        <b>How it works (Students):</b> You submit exactly one sealed bid (private).
+        The pricing rule is <b>{pricing === 'second' ? 'Second-Price' : 'First-Price'}</b>.
+        <ul style={{ margin: '6px 0 0 18px' }}>
+          <li><b>My Cap</b> is your personal budget ceiling — your bid must not exceed it.</li>
+          <li>You can submit <b>only once</b>. After submission, you cannot edit your bid.</li>
+          <li>If multiple highest bids are tied, the winner is selected <b>at random</b> with equal probability among the tied bidders.</li>
+          <li>If it is Second-Price, the winner pays the highest losing bid (if none exists, pays their own bid).</li>
+        </ul>
+      </Alert>
 
-          {/* 教师端专属：订单列表 */}
-          <div>
-            <h4 style={{ margin: '8px 0' }}>Orders (Host only)</h4>
-            {orders.length === 0 && <p>No orders yet.</p>}
-            {orders.map((o, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, padding: '6px 0', borderBottom: '1px solid #eee' }}>
-                <span>{o.price}</span>
-                <span>{o.name}</span>
-                <span style={{ color: '#888' }}>{new Date(o.time).toLocaleTimeString()}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+      <Typography sx={{ mb: 1 }}>
+        <b>User:</b> {username} &nbsp; | &nbsp; <b>My Cap:</b> {myCap ?? '—'} &nbsp; | &nbsp; <b>Pricing:</b> {pricing === 'second' ? 'Second-Price' : 'First-Price'}
+      </Typography>
+      <Alert severity={status === 'collecting' ? 'success' : status === 'ended' ? 'info' : 'warning'} sx={{ mb: 2 }}>
+        {phaseHint}
+      </Alert>
+
+      {/* Submit area (students). Locked after first submission. */}
+      <Box sx={{ display: 'flex', gap: 8, mb: 2 }}>
+        <input
+          type="number"
+          value={bid}
+          onChange={(e) => setBid(e.target.value)}
+          placeholder={mySubmitted ? 'Bid already submitted' : 'Enter your sealed bid'}
+          disabled={mySubmitted || status !== 'collecting'}
+          style={{ flex: 1, padding: 10 }}
+        />
+        <Button
+          variant="contained"
+          onClick={handleSubmitBid}
+          disabled={mySubmitted || status !== 'collecting'}
+        >
+          Submit Bid
+        </Button>
+      </Box>
+
+      {mySubmitted && (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          Your bid has been recorded{typeof mySubmittedAmount === 'number' ? `: ${mySubmittedAmount}` : ''}. You cannot submit again.
+        </Alert>
       )}
 
-      {/* 参与者出价（任何人都可提交密封价） */}
-      <input
-        type="number"
-        value={bid}
-        onChange={(e) => setBid(e.target.value)}
-        placeholder="Enter sealed bid"
-        style={{ width: '100%', padding: 8, marginRight: 8, marginBottom: 8 }}
-      />
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={handleSubmitBid} style={{ flex: 1, padding: 10 }}>Submit Bid</button>
-        {/* 非教师端不显示揭标按钮 */}
-      </div>
+      {/* Teacher-only controls + live orders */}
+      {isHost && (
+        <Box sx={{ border: '1px solid #eee', borderRadius: 1, p: 2, mb: 2 }}>
+          <Alert severity="success" sx={{ mb: 1 }}>
+            <b>Teacher guide:</b> Pricing rule was chosen when creating the room. During the collecting phase,
+            bids are hidden from students. Click <b>Reveal Winner</b> to finalize.
+          </Alert>
+          <Button variant="contained" onClick={handleReveal} disabled={status !== 'collecting'}>
+            Reveal Winner (Host)
+          </Button>
 
-      <div style={{ marginTop: 12 }}>
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="subtitle2" gutterBottom>Orders (Host only)</Typography>
+          {orders.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">No orders yet.</Typography>
+          ) : (
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', rowGap: 0.5 }}>
+              <Typography sx={{ fontWeight: 600 }}>Price</Typography>
+              <Typography sx={{ fontWeight: 600 }}>Name</Typography>
+              <Typography sx={{ fontWeight: 600 }}>Time</Typography>
+              <Divider sx={{ gridColumn: '1 / -1', my: 1 }} />
+              {orders.map((o, i) => (
+                <React.Fragment key={i}>
+                  <Typography>{o.price}</Typography>
+                  <Typography>{o.name}</Typography>
+                  <Typography sx={{ color: 'text.secondary' }}>
+                    {new Date(o.time).toLocaleTimeString()}
+                  </Typography>
+                </React.Fragment>
+              ))}
+            </Box>
+          )}
+        </Box>
+      )}
+
+      {/* Winner display */}
+      <Box sx={{ mt: 2 }}>
         {winner
-          ? <p>Winner: <b>{winner.username}</b>, Amount: <b>{winner.amount}</b> <i>({winner.pricing})</i></p>
-          : <p>No winner yet.</p>
+          ? <Typography>Winner: <b>{winner.username}</b>, Amount: <b>{winner.amount}</b> <i>({winner.pricing})</i></Typography>
+          : <Typography>No winner yet.</Typography>
         }
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }
 

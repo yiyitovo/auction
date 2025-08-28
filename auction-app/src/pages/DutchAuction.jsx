@@ -1,4 +1,4 @@
-// src/pages/DutchAuction.jsx — accept button only
+// src/pages/DutchAuction.jsx — accept button only (server validates cap), with EN instructions
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -72,18 +72,18 @@ function DutchAuction() {
     };
   }, [roomId]);
 
-  // 只接受“当前价”
+  // Students: accept the *current* price (server validates cap/timing)
   const handleAccept = () => {
-    socket.emit('accept-price', { roomId });
+    socket.emit('accept-price', { roomId }); // server uses the current price & checks cap
   };
 
-  // 老师控制区
+  // Teacher controls
   const [startPrice, setStartPrice] = React.useState('');
   const [step, setStep] = React.useState(1);
   const [intervalSec, setIntervalSec] = React.useState(1);
   const [minPrice, setMinPrice] = React.useState(0);
-
   const canControl = isTeacher && isHost;
+
   const applyConfig = () => {
     const sPrice = Number(startPrice);
     const sStep = Number(step);
@@ -107,61 +107,119 @@ function DutchAuction() {
     <Box sx={{ maxWidth: 820, mx: 'auto', mt: 4, p: 2 }}>
       <Typography variant="h5" gutterBottom>Dutch Auction</Typography>
 
+      {/* Student instructions (EN) */}
+      <Alert severity="info" sx={{ mb: 2 }}>
+        <b>How to participate:</b> The price counts down automatically.
+        <b> My Cap</b> is your personal maximum ,you must never pay above it.
+        You may wait for a lower price and click <i>Accept Current Price</i> at any moment
+        while the clock is running. Your bid is the <b>Current Price</b> at the instant you click.
+        If multiple students accept simultaneously, the earliest timestamp wins.
+        The system will block any acceptance above your My Cap.
+      </Alert>
+
       <Stack direction="row" spacing={3} sx={{ mb: 2 }} alignItems="center" flexWrap="wrap">
         <Typography><b>User:</b> {username}</Typography>
         <Typography><b>My Cap:</b> {myCap ?? '—'}</Typography>
         <Typography><b>Current Price:</b> {currentPrice ?? 'Not set'}</Typography>
-        {msg && <Alert severity={status==='in-progress' ? 'success' : 'info'} sx={{ py: 0.5 }}>{msg}</Alert>}
+        {msg && <Alert severity={status==='in-progress' ? 'success' : 'warning'} sx={{ py: 0.5, m:0 }}>{msg}</Alert>}
       </Stack>
 
-      {/* 预算列表（如需可保留） */}
-      <Box sx={{ border: '1px solid #eee', borderRadius: 1, p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom>Budgets</Typography>
-        {budgets.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">No participants yet.</Typography>
-        ) : (
-          <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 1fr', rowGap: 0.5 }}>
-            <Typography sx={{ fontWeight: 600 }}>Name</Typography>
-            <Typography sx={{ fontWeight: 600 }}>Cap</Typography>
-            <Divider sx={{ gridColumn: '1 / -1', my: 1 }} />
-            {budgets.map((b, i) => (
-              <React.Fragment key={i}>
-                <Typography>{b.name}</Typography>
-                <Typography>{b.cap}</Typography>
-              </React.Fragment>
-            ))}
-          </Box>
-        )}
-      </Box>
-
-      {/* 学生端/所有人：只保留一个按钮 */}
+      {/* Accept button — only disabled if not running or no current price; NOT tied to My Cap on UI */}
       <Button
         variant="contained"
         onClick={handleAccept}
         disabled={status !== 'in-progress' || !Number.isFinite(Number(currentPrice))}
-        sx={{ width: '100%', py: 1.5, fontWeight: 600 }}
+        sx={{ width: '100%', py: 1.5, fontWeight: 700, mb: 2 }}
       >
         Accept Current Price
       </Button>
 
-      {/* 老师（房主）控制区 */}
+      {/* Teacher-only instructions + controls */}
       {canControl && (
         <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 2, mt: 2 }}>
-          <Typography variant="subtitle1" gutterBottom>Clock Configuration (Teacher Only)</Typography>
+          <Alert severity="success" sx={{ mb: 2 }}>
+            <b>Teacher guide:</b> Configure the price clock, then press <b>Start</b>.
+            <ul style={{ marginTop: 8, marginBottom: 0, paddingLeft: 18 }}>
+              <li><b>Start Price</b>: the initial price the clock starts from.</li>
+              <li><b>Drop Step</b>: how much the price decreases each tick.</li>
+              <li><b>Interval (sec)</b>: seconds between ticks.</li>
+              <li><b>Min Price (floor)</b>: the lowest allowed price; clock pauses at this value.</li>
+              <li>Use <b>Apply</b> to set values, <b>Start</b> to run, and <b>Stop</b> to pause.</li>
+              <li>Winner is the first student who accepts a price (server resolves ties by timestamp).</li>
+            </ul>
+          </Alert>
+
           <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
-            <input type="number" placeholder="Start Price" value={startPrice} onChange={(e)=>setStartPrice(e.target.value)} style={{ flex: 1, minWidth: 160, padding: 8 }} />
-            <input type="number" placeholder="Drop Step"   value={step}        onChange={(e)=>setStep(e.target.value)}        style={{ flex: 1, minWidth: 160, padding: 8 }} />
-            <input type="number" placeholder="Interval (sec)" value={intervalSec} onChange={(e)=>setIntervalSec(e.target.value)} style={{ flex: 1, minWidth: 160, padding: 8 }} />
-            <input type="number" placeholder="Min Price (floor)" value={minPrice} onChange={(e)=>setMinPrice(e.target.value)} style={{ flex: 1, minWidth: 160, padding: 8 }} />
+            <Box sx={{ flex: 1, minWidth: 180 }}>
+              <Typography variant="caption" sx={{ fontWeight: 600 }}>Start Price</Typography>
+              <input
+                type="number"
+                placeholder="e.g. 100"
+                value={startPrice}
+                onChange={(e)=>setStartPrice(e.target.value)}
+                style={{ width: '100%', padding: 8 }}
+              />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 180 }}>
+              <Typography variant="caption" sx={{ fontWeight: 600 }}>Drop Step</Typography>
+              <input
+                type="number"
+                placeholder="e.g. 5"
+                value={step}
+                onChange={(e)=>setStep(e.target.value)}
+                style={{ width: '100%', padding: 8 }}
+              />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 180 }}>
+              <Typography variant="caption" sx={{ fontWeight: 600 }}>Interval (sec)</Typography>
+              <input
+                type="number"
+                placeholder="e.g. 1"
+                value={intervalSec}
+                onChange={(e)=>setIntervalSec(e.target.value)}
+                style={{ width: '100%', padding: 8 }}
+              />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 180 }}>
+              <Typography variant="caption" sx={{ fontWeight: 600 }}>Min Price (floor)</Typography>
+              <input
+                type="number"
+                placeholder="e.g. 20"
+                value={minPrice}
+                onChange={(e)=>setMinPrice(e.target.value)}
+                style={{ width: '100%', padding: 8 }}
+              />
+            </Box>
           </Stack>
+
           <Stack direction="row" spacing={2}>
             <Button variant="outlined" onClick={applyConfig}>Apply</Button>
             <Button variant="contained" onClick={startClock}>Start</Button>
             <Button variant="outlined" color="warning" onClick={stopClock}>Stop</Button>
           </Stack>
+
           <Typography variant="caption" sx={{ mt: 1, display: 'block', color: 'text.secondary' }}>
             Current cfg: drop {cfg.step} every {Math.round((cfg.intervalMs||1000)/1000)}s, floor {cfg.minPrice}
           </Typography>
+
+          {/* Teacher-only budget table (students can't see others' caps) */}
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="subtitle2" gutterBottom>Participants' Budgets (Teacher Only)</Typography>
+          {budgets.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">No participants yet.</Typography>
+          ) : (
+            <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 1fr', rowGap: 0.5 }}>
+              <Typography sx={{ fontWeight: 600 }}>Name</Typography>
+              <Typography sx={{ fontWeight: 600 }}>Cap</Typography>
+              <Divider sx={{ gridColumn: '1 / -1', my: 1 }} />
+              {budgets.map((b, i) => (
+                <React.Fragment key={i}>
+                  <Typography>{b.name}</Typography>
+                  <Typography>{b.cap}</Typography>
+                </React.Fragment>
+              ))}
+            </Box>
+          )}
         </Box>
       )}
     </Box>
@@ -169,4 +227,3 @@ function DutchAuction() {
 }
 
 export default DutchAuction;
-

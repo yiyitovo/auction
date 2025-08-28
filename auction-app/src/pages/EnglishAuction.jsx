@@ -1,6 +1,6 @@
-// src/pages/EnglishAuction.jsx — order-only
+// src/pages/EnglishAuction.jsx
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
 
 const BACKEND_URL = "https://auction-backend-k44x.onrender.com";
@@ -8,16 +8,13 @@ const socket = io(BACKEND_URL);
 
 function EnglishAuction() {
   const { id: roomId } = useParams();
-  const navigate = useNavigate();
 
   const [myName, setMyName] = useState('');
   const [myCap, setMyCap] = useState(null);
   const [currentPrice, setCurrentPrice] = useState(null);
   const [highestBidder, setHighestBidder] = useState(null);
   const [bid, setBid] = useState('');
-  const [orders, setOrders] = useState([]); // [{price,name,time}]
-  const [ended, setEnded] = useState(false);
-  const [winner, setWinner] = useState(null);
+  const [isHost, setIsHost] = useState(false);
 
   useEffect(() => {
     let username = localStorage.getItem('username');
@@ -37,26 +34,27 @@ function EnglishAuction() {
       else if (reason === 'INVALID_AMOUNT') alert(`Amount must be greater than current price: ${curr}`);
       else alert('Bid rejected');
     };
-    const onOrders = (list) => { if (Array.isArray(list)) setOrders(list); };
-    const onEnded = ({ winner }) => { setEnded(true); setWinner(winner || null); };
+    const onRoomInfo = ({ isHost }) => setIsHost(!!isHost);
+    const onEnded = ({ winner }) => {
+      if (winner) alert(`Winner: ${winner.username} @ ${winner.amount}`);
+      else alert('No winner');
+    };
 
     socket.on('bid-update', onBidUpdate);
     socket.on('your-budget', onBudget);
     socket.on('bid-rejected', onRejected);
-    socket.on('order', onOrders);        // 只监听 order
-    socket.on('english-ended', onEnded);
+    socket.on('room-info', onRoomInfo);
+    socket.on('auction-ended', onEnded);
 
     socket.emit('join-room', { roomId, username });
     socket.emit('join-english', { roomId });
-
-    console.log('[English] FE listening: order only');
 
     return () => {
       socket.off('bid-update', onBidUpdate);
       socket.off('your-budget', onBudget);
       socket.off('bid-rejected', onRejected);
-      socket.off('order', onOrders);
-      socket.off('english-ended', onEnded);
+      socket.off('room-info', onRoomInfo);
+      socket.off('auction-ended', onEnded);
     };
   }, [roomId]);
 
@@ -71,56 +69,39 @@ function EnglishAuction() {
     setBid('');
   };
 
-  const handleExit = () => {
-    socket.emit('leave-room', { roomId });
-    navigate('/');
+  const handleHammer = () => {
+    if (!confirm('End the auction now?')) return;
+    socket.emit('english-hammer', { roomId });
   };
 
   return (
-    <div style={{ maxWidth: 720, margin: '16px auto', padding: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0 }}>English Auction</h2>
-        <button onClick={handleExit} style={{ padding: '8px 12px' }}>Exit</button>
-      </div>
-
+    <div style={{ maxWidth: 520, margin: '16px auto' }}>
+      <h2>English Auction</h2>
       <p><b>User:</b> {myName}</p>
       <p><b>My Cap:</b> {myCap ?? '—'}</p>
       <p><b>Current Price:</b> {currentPrice ?? 'No bid yet'}</p>
       <p><b>Highest Bidder:</b> {highestBidder ?? '—'}</p>
 
-      {!ended ? (
-        <>
-          <input
-            type="number"
-            value={bid}
-            onChange={(e) => setBid(e.target.value)}
-            placeholder="Enter your bid"
-            style={{ width: '100%', padding: 8, marginBottom: 8 }}
-          />
-          <button onClick={handlePlaceBid} style={{ width: '100%', padding: 10 }}>
-            Place Bid
-          </button>
-        </>
-      ) : (
-        <div style={{ padding: 10, background: '#f5f5f5', marginTop: 8 }}>
-          {winner
-            ? <p><b>Winner:</b> {winner.username} &nbsp; <b>Amount:</b> {winner.amount}</p>
-            : <p>No winner.</p>
-          }
-        </div>
-      )}
+      <input
+        type="number"
+        value={bid}
+        onChange={(e) => setBid(e.target.value)}
+        placeholder="Enter your bid"
+        style={{ width: '100%', padding: 8, marginBottom: 8 }}
+      />
+      <button onClick={handlePlaceBid} style={{ width: '100%', padding: 10 }}>
+        Place Bid
+      </button>
 
-      <div style={{ marginTop: 16 }}>
-        <h4 style={{ marginBottom: 8 }}>Orders</h4>
-        {orders.length === 0 && <p>No orders yet.</p>}
-        {orders.map((o, i) => (
-          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, padding: '6px 0', borderBottom: '1px solid #eee' }}>
-            <span>{o.price}</span>
-            <span>{o.name}</span>
-            <span style={{ color: '#888' }}>{new Date(o.time).toLocaleTimeString()}</span>
-          </div>
-        ))}
-      </div>
+      {/* 教师/房主可见的“拍锤” */}
+      {isHost && (
+        <button
+          onClick={handleHammer}
+          style={{ width: '100%', padding: 10, marginTop: 12, background: '#1976d2', color: '#fff', border: 'none', borderRadius: 4 }}
+        >
+          Hammer (End Auction)
+        </button>
+      )}
     </div>
   );
 }
