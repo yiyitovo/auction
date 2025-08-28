@@ -190,7 +190,7 @@ app.post("/auctions", requireTeacher, (req, res) => {
     englishBase = 0,
     englishNoBidSec = 0,
     // Double / Sealed
-    doubleMode = "integrated",  // integrated | dynamic
+    doubleMode = "call",  // Call | CDA
     sealedPricing = "first"     // first | second
   } = req.body;
 
@@ -223,7 +223,7 @@ app.post("/auctions", requireTeacher, (req, res) => {
 
   // Double 初始化
   if (t === 'double') {
-    const mode = String(doubleMode || 'integrated').toLowerCase() === 'dynamic' ? 'dynamic' : 'integrated';
+    const mode = String(doubleMode || 'call').toLowerCase() === 'cda' ? 'cda' : 'call';
     rooms[id].double = { mode };
     rooms[id].buys   = [];
     rooms[id].sells  = [];

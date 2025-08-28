@@ -25,7 +25,7 @@ export default function CreateAuction() {
   const [maxAmount, setMaxAmount] = useState(150);
 
   // 新增配置
-  const [doubleMode, setDoubleMode] = useState('integrated'); // integrated | dynamic
+  const [doubleMode, setDoubleMode] = useState('call'); // Call | CDA
   const [sealedPricing, setSealedPricing] = useState('first'); // first | second
 
   const [msg, setMsg] = useState('');
@@ -110,8 +110,8 @@ export default function CreateAuction() {
         <FormControl fullWidth margin="normal">
           <InputLabel>Matching Mode</InputLabel>
           <Select value={doubleMode} label="Matching Mode" onChange={(e)=>setDoubleMode(e.target.value)}>
-            <MenuItem value="integrated">Integrated (teacher presses Match)</MenuItem>
-            <MenuItem value="dynamic">Dynamic (continuous matching)</MenuItem>
+            <MenuItem value="call">Call</MenuItem>
+            <MenuItem value="cda">CDA</MenuItem>
           </Select>
         </FormControl>
       )}
@@ -121,8 +121,8 @@ export default function CreateAuction() {
         <FormControl fullWidth margin="normal">
           <InputLabel>Pricing</InputLabel>
           <Select value={sealedPricing} label="Pricing" onChange={(e)=>setSealedPricing(e.target.value)}>
-            <MenuItem value="first">First-price (pay your bid)</MenuItem>
-            <MenuItem value="second">Second-price (Vickrey)</MenuItem>
+            <MenuItem value="first">First-price</MenuItem>
+            <MenuItem value="second">Second-price</MenuItem>
           </Select>
         </FormControl>
       )}
