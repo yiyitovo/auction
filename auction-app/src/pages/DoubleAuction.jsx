@@ -84,7 +84,7 @@ export default function DoubleAuction() {
   const StudentHowItWorks = () => (
     <Alert severity="info" sx={{ background: '#e8f0fe' }}>
       <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
-        How it works (Students)
+        How it works
       </Typography>
       <ul style={{ margin: '4px 0 0 18px' }}>
         {mode === 'cda' ? (
@@ -155,7 +155,7 @@ export default function DoubleAuction() {
       {/* Teacher controls */}
       {canControl && (
         <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 2, mt: 1 }}>
-          <Typography variant="subtitle1" gutterBottom>Round Controls (Teacher Only)</Typography>
+          <Typography variant="subtitle1" gutterBottom>Round Controls</Typography>
           <Stack direction="row" spacing={2}>
             <Button variant="contained" onClick={start}>Start</Button>
             <Button variant="outlined" color="warning" onClick={stop}>Stop</Button>
