@@ -1,9 +1,8 @@
-// src/pages/DoubleAuction.jsx — unified style (CDA/Call fixed at creation)
-// Students see My Cap and ONE input (buy OR sell). Teacher has only Start/Stop.
+// src/pages/DoubleAuction.jsx — MUI 风格统一版
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
-import { Box, Typography, Button, Stack, Alert, Divider } from '@mui/material';
+import { Box, Typography, Alert, Button, Divider, TextField, Chip, Stack } from '@mui/material';
 
 const BACKEND_URL = 'https://auction-backend-k44x.onrender.com';
 const socket = io(BACKEND_URL);
@@ -13,17 +12,17 @@ export default function DoubleAuction() {
 
   const [username, setUsername] = useState('');
   const [myCap, setMyCap] = useState(null);
-  const [mode, setMode] = useState('cda');           // 'cda' | 'call' (fixed at creation)
-  const [status, setStatus] = useState('waiting');    // 'waiting' | 'collecting' | 'trading' | 'ended'
-  const [side, setSide] = useState(null);             // 'buy' | 'sell'
+  const [role, setRole] = useState(null);      // 'buy' | 'sell' | null
+  const [mode, setMode] = useState('cda');     // 'cda' | 'call'
+  const [status, setStatus] = useState('waiting'); // 'waiting' | 'running' | others
   const [isHost, setIsHost] = useState(false);
   const [isTeacher, setIsTeacher] = useState(false);
 
-  const [price, setPrice] = useState('');            // input for buy/sell
-  const [matches, setMatches] = useState([]);        // [{buyer, seller, price}]
+  const [price, setPrice] = useState('');
+  const [trades, setTrades] = useState([]);
 
-  // --- socket wiring
   useEffect(() => {
+    // 准备用户名与角色
     let name = localStorage.getItem('username');
     if (!name) {
       name = prompt('Enter a username') || `User-${Math.random().toString(36).slice(2,6)}`;
@@ -32,159 +31,174 @@ export default function DoubleAuction() {
     setUsername(name);
     setIsTeacher((localStorage.getItem('role') || '') === 'teacher');
 
-    const onConfig  = ({ mode }) => setMode((mode || 'cda'));
-    const onState   = ({ status }) => setStatus(status || 'waiting');
-    const onSide    = ({ side }) => setSide(side || null);
-    const onRoom    = ({ isHost }) => setIsHost(!!isHost);
-    const onBudget  = ({ cap }) => setMyCap(cap);
-    const onMatch   = (list) => setMatches(Array.isArray(list) ? list : []);
-    const onReject  = ({ reason, cap }) => {
-      if (reason === 'OVER_BUDGET') alert(`Your price exceeds your cap: ${cap}.`);
-      else if (reason === 'NO_SIDE') alert('Your role is not assigned yet. Please rejoin.');
-      else alert('Order rejected.');
+    // 监听器
+    const onRoomInfo   = ({ isHost }) => setIsHost(!!isHost);
+    const onBudgetMine = ({ cap }) => setMyCap(cap);
+    const onSide       = ({ side }) => setRole(side || null);
+    const onState      = (s) => {
+      if (s?.mode) setMode(s.mode);
+      if (s?.status) setStatus(s.status);
+    };
+    const onTrades     = (list) => setTrades(t => [...t, ...(Array.isArray(list) ? list : [])]);
+
+    const onRejected   = ({ reason, cap }) => {
+      const map = {
+        OVER_BUDGET: `Price exceeds your cap: ${cap}`,
+        NO_SIDE: 'Role not assigned.',
+        SIDE_MISMATCH: 'Your role does not match this action.',
+        NOT_RUNNING: 'The round has not started yet.',
+      };
+      alert(map[reason] || 'Rejected.');
     };
 
-    socket.on('double-config', onConfig);
-    socket.on('double-state', onState);
+    // 注册事件
+    socket.on('room-info', onRoomInfo);
+    socket.on('your-budget', onBudgetMine);
     socket.on('double-side', onSide);
-    socket.on('room-info', onRoom);
-    socket.on('your-budget', onBudget);
-    socket.on('double-match', onMatch);
-    socket.on('bid-rejected', onReject);
+    socket.on('double-state', onState);
+    socket.on('double-match', onTrades);
+    socket.on('bid-rejected', onRejected);
 
-    socket.emit('join-room', { roomId, username: name });
+    // 加入房间与双边拍卖命名空间
+    socket.emit('join-room',   { roomId, username: name });
     socket.emit('join-double', { roomId });
 
     return () => {
-      socket.off('double-config', onConfig);
-      socket.off('double-state', onState);
+      socket.off('room-info', onRoomInfo);
+      socket.off('your-budget', onBudgetMine);
       socket.off('double-side', onSide);
-      socket.off('room-info', onRoom);
-      socket.off('your-budget', onBudget);
-      socket.off('double-match', onMatch);
-      socket.off('bid-rejected', onReject);
+      socket.off('double-state', onState);
+      socket.off('double-match', onTrades);
+      socket.off('bid-rejected', onRejected);
     };
   }, [roomId]);
 
-  // --- actions
-  const submitOrder = () => {
+  const isTeacherHost = isTeacher && isHost;
+
+  const submit = () => {
     const p = Number(price);
     if (!Number.isFinite(p) || p <= 0) return;
-    if (side === 'buy') socket.emit('submit-buy', { roomId, price: p });
-    if (side === 'sell') socket.emit('submit-sell', { roomId, price: p });
+    if (role === 'buy')  socket.emit('submit-buy',  { roomId, price: p });
+    if (role === 'sell') socket.emit('submit-sell', { roomId, price: p });
     setPrice('');
   };
 
-  const start = () => socket.emit('double-start', { roomId }); // teacher only
-  const stop  = () => socket.emit('double-stop',  { roomId }); // teacher only (Call: clear & broadcast)
+  const start = () => socket.emit('double-start', { roomId });
+  const stop  = () => socket.emit('double-stop',  { roomId });
 
-  const canControl = isTeacher && isHost;
+  // 与 SealedAuction 一致的“阶段提示”与 Alert 风格
+  const statusText =
+    status === 'waiting' ? 'Waiting for teacher to start…'
+    : status === 'running' ? 'Round is running. You may submit quotes.'
+    : `Status: ${status}`;
 
-  // --- UI helpers
-  const StudentHowItWorks = () => (
-    <Alert severity="info" sx={{ background: '#e8f0fe' }}>
-      <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
-        How it works
-      </Typography>
-      <ul style={{ margin: '4px 0 0 18px' }}>
-        {mode === 'cda' ? (
-          <>
-            <li>You are auto-assigned as a <b>Buyer</b> or <b>Seller</b>.</li>
-            <li>Submit one price at a time: Buyers submit a <b>bid</b>, Sellers submit an <b>ask</b>.</li>
-            <li>The market clears continuously during the round; trades may occur at any moment.</li>
-          </>
-        ) : (
-          <>
-            <li>You are auto-assigned as a <b>Buyer</b> or <b>Seller</b>.</li>
-            <li>During the collecting phase, submit your <b>bid/ask</b>. No trades happen until the teacher stops the round.</li>
-            <li>At stop, the system computes a <b>uniform clearing price</b> and executes all feasible matches.</li>
-          </>
-        )}
-        <li><b>My Cap</b> is your personal budget ceiling — your submitted price must not exceed it.</li>
-        <li>If multiple trades are feasible, matching follows the market’s rule; ties may be broken at random.</li>
-      </ul>
-    </Alert>
-  );
-
-  const TeacherGuide = () => (
-    <Alert severity="success" sx={{ mt: 1 }}>
-      <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-        Teacher guide
-      </Typography>
-      {mode === 'cda'
-        ? <>This room is <b>Continuous Double Auction</b>. Click <b>Start</b> to open trading and <b>Stop</b> to end the round.</>
-        : <>This room is <b>Call (Uniform-Price)</b>. Click <b>Start</b> to begin collecting orders, and <b>Stop</b> to clear the market and show matches.</>}
-    </Alert>
-  );
+  const statusSeverity =
+    status === 'running' ? 'success'
+    : status === 'waiting' ? 'warning'
+    : 'info';
 
   return (
     <Box sx={{ maxWidth: 820, mx: 'auto', mt: 4, p: 2 }}>
-      <Typography variant="h5" gutterBottom>Double Auction</Typography>
-
-      <StudentHowItWorks />
-
-      <Stack direction="row" spacing={3} sx={{ mb: 2, mt: 1 }} alignItems="center" flexWrap="wrap">
-        <Typography><b>User:</b> {username}</Typography>
-        <Typography><b>My Cap:</b> {myCap ?? '—'}</Typography>
-        <Typography><b>Mode:</b> {mode === 'cda' ? 'CDA' : 'Call'}</Typography>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+        <Typography variant="h5">Double Auction</Typography>
+        <Chip
+          size="small"
+          label={mode === 'cda' ? 'CDA (Continuous)' : 'Call (Uniform Price)'}
+        />
       </Stack>
 
-      {/* Status banner */}
-      {status === 'collecting' && <Alert severity="info" sx={{ mb: 1 }}>Collecting orders…</Alert>}
-      {status === 'trading'    && <Alert severity="success" sx={{ mb: 1 }}>Live trading…</Alert>}
-      {status === 'ended'      && <Alert severity="warning" sx={{ mb: 1 }}>Round ended.</Alert>}
+      {/* 学生说明区（统一使用 Alert） */}
+      <Alert severity="info" sx={{ mb: 2 }}>
+        <b>How it works:</b>{' '}
+        {mode === 'cda' ? (
+          <>
+            This is a <b>Continuous Double Auction (CDA)</b>. You are automatically assigned as a
+            <b> Buyer</b> or <b>Seller</b>. Submit your quote any time; the market matches by
+            <i> price–time priority</i>, and trades execute at the <i>resting</i> order&apos;s price.
+          </>
+        ) : (
+          <>
+            This is a <b>Call / Uniform-Price Double Auction</b>. Quotes are collected while the
+            round is running. When the teacher clicks <i>Stop</i>, all feasible trades clear at a
+            single <i>uniform price</i>.
+          </>
+        )}
+        <ul style={{ margin: '6px 0 0 18px' }}>
+          <li><b>My Cap</b> is your personal budget ceiling — your quote must not exceed it.</li>
+          <li>Your role is <b>{role ? role.toUpperCase() : 'assigning…'}</b>. Enter a {role === 'sell' ? 'sell (ask)' : 'buy (bid)'} price and submit.</li>
+        </ul>
+      </Alert>
 
-      {/* ONE input according to role */}
-      <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
-        <input
+      {/* 顶部信息行，与 SealedAuction 风格一致 */}
+      <Typography sx={{ mb: 1 }}>
+        <b>User:</b> {username} &nbsp; | &nbsp;
+        <b>Role:</b> {role ? role.toUpperCase() : '—'} &nbsp; | &nbsp;
+        <b>My Cap:</b> {myCap ?? '—'} &nbsp; | &nbsp;
+        <b>Mode:</b> {mode === 'cda' ? 'CDA (Continuous)' : 'Call (Uniform Price)'}
+      </Typography>
+
+      {/* 状态提示 */}
+      <Alert severity={statusSeverity} sx={{ mb: 2 }}>
+        {statusText}
+      </Alert>
+
+      {/* 学生输入区：TextField + Button，与 SealedAuction 一致的交互节奏 */}
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
+        <TextField
           type="number"
+          inputProps={{ min: 0, step: 'any' }}
           value={price}
-          onChange={(e)=>setPrice(e.target.value)}
-          placeholder={side === 'sell' ? 'Enter your ask price' : 'Enter your bid price'}
-          style={{ flex: 1, padding: 10, border: '1px solid #ddd', borderRadius: 4 }}
+          onChange={(e) => setPrice(e.target.value)}
+          placeholder={role === 'sell' ? 'Enter your ask (sell price)' : 'Enter your bid (buy price)'}
+          fullWidth
+          disabled={status !== 'running' || !role}
         />
         <Button
           variant="contained"
-          onClick={submitOrder}
-          disabled={!side || status === 'ended' || status === 'waiting'}
+          onClick={submit}
+          disabled={status !== 'running' || !role}
         >
-          {side === 'sell' ? 'Submit Ask' : 'Submit Bid'}
+          {role === 'sell' ? 'Submit Sell' : 'Submit Buy'}
         </Button>
-      </Stack>
+      </Box>
 
-      {/* Teacher controls */}
-      {canControl && (
-        <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 2, mt: 1 }}>
-          <Typography variant="subtitle1" gutterBottom>Round Controls</Typography>
-          <Stack direction="row" spacing={2}>
-            <Button variant="contained" onClick={start}>Start</Button>
-            <Button variant="outlined" color="warning" onClick={stop}>Stop</Button>
+      {/* 教师控制区：统一用 Alert + Button + 说明 */}
+      {isTeacherHost && (
+        <Box sx={{ border: '1px solid #eee', borderRadius: 1, p: 2, mb: 2 }}>
+          <Alert severity="success" sx={{ mb: 1 }}>
+            <b>Teacher guide:</b> Press <b>Start</b> to open the round. Press <b>Stop</b> to pause
+            the market. In <i>Call</i> mode, stopping will clear the market to a uniform price.
+          </Alert>
+          <Stack direction="row" spacing={1}>
+            <Button variant="contained" onClick={start} disabled={status === 'running'}>Start</Button>
+            <Button variant="outlined"  onClick={stop}  disabled={status !== 'running'}>Stop</Button>
           </Stack>
-          <TeacherGuide />
         </Box>
       )}
 
-      {/* Matches list */}
+      {/* 成交列表：与 Sealed 的 Orders 网格风格统一 */}
       <Box sx={{ mt: 2 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>Matches</Typography>
-        {(!matches || matches.length === 0) ? (
-          <Typography color="text.secondary">No trades yet.</Typography>
+        <Typography variant="subtitle2" gutterBottom>Trades (Live)</Typography>
+        {trades.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">No trades yet.</Typography>
         ) : (
-          <>
-            <Stack direction="row" spacing={2} sx={{ fontWeight: 600, mb: 0.5 }}>
-              <Typography sx={{ width: 1/3 }}>Buyer</Typography>
-              <Typography sx={{ width: 1/3 }}>Seller</Typography>
-              <Typography sx={{ width: 1/3 }}>Price</Typography>
-            </Stack>
-            <Divider sx={{ mb: 1 }} />
-            {matches.map((m, i) => (
-              <Stack key={i} direction="row" spacing={2} sx={{ mb: 0.5 }}>
-                <Typography sx={{ width: 1/3 }}>{m.buyer}</Typography>
-                <Typography sx={{ width: 1/3 }}>{m.seller}</Typography>
-                <Typography sx={{ width: 1/3 }}>{m.price}</Typography>
-              </Stack>
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', rowGap: 0.5 }}>
+            <Typography sx={{ fontWeight: 600 }}>Price</Typography>
+            <Typography sx={{ fontWeight: 600 }}>Buyer</Typography>
+            <Typography sx={{ fontWeight: 600 }}>Seller</Typography>
+            <Typography sx={{ fontWeight: 600 }}>Time</Typography>
+            <Divider sx={{ gridColumn: '1 / -1', my: 1 }} />
+            {trades.map((t, i) => (
+              <React.Fragment key={i}>
+                <Typography>{t.price}</Typography>
+                <Typography>{t.buyer}</Typography>
+                <Typography>{t.seller}</Typography>
+                <Typography sx={{ color: 'text.secondary' }}>
+                  {new Date(t.time).toLocaleTimeString()}
+                </Typography>
+              </React.Fragment>
             ))}
-          </>
+          </Box>
         )}
       </Box>
     </Box>

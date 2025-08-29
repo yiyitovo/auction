@@ -110,7 +110,7 @@ function SealedAuction() {
 
       {/* Student-facing instructions */}
       <Alert severity="info" sx={{ mb: 2 }}>
-        <b>How it works (Students):</b> You submit exactly one sealed bid (private).
+        <b>How it works:</b> You submit exactly one sealed bid.
         The pricing rule is <b>{pricing === 'second' ? 'Second-Price' : 'First-Price'}</b>.
         <ul style={{ margin: '6px 0 0 18px' }}>
           <li><b>My Cap</b> is your personal budget ceiling — your bid must not exceed it.</li>
