@@ -1,4 +1,4 @@
-// auctions/english.js
+// auctions/english.js — Start gating + no-bid countdown + single Apply + Stop ends
 module.exports = (io, socket, rooms) => {
   // ===== 工具 =====
   function isHost(room, username) {
@@ -6,7 +6,7 @@ module.exports = (io, socket, rooms) => {
   }
   function ensureEnglish(room) {
     room.english = room.english || {};
-    if (typeof room.english.countdownSec !== 'number') room.english.countdownSec = 60;
+    if (typeof room.english.countdownSec !== 'number') room.english.countdownSec = 60; // 无人加价秒数
     if (typeof room.english.remaining !== 'number') room.english.remaining = null;
     room.englishOrders = room.englishOrders || []; // [{user, amount, ts}]
     return room.english;
@@ -14,17 +14,17 @@ module.exports = (io, socket, rooms) => {
   function stopTick(room) {
     if (room?.english?._tick) { clearInterval(room.english._tick); room.english._tick = null; }
   }
+  function emitState(io, rooms, roomId) {
+    const room = rooms[roomId]; if (!room) return;
+    io.to(roomId).emit('english:state', { status: room.status || 'waiting' });
+    io.to(`host:${roomId}`).emit('english:state', { status: room.status || 'waiting' });
+  }
   function broadcastOrders(io, rooms, roomId) {
     const room = rooms[roomId]; if (!room) return;
     const list = (room.englishOrders || []).slice()
       .sort((a,b)=> b.amount - a.amount || a.ts - b.ts);
     io.to(roomId).emit('english:orders', { orders: list });
     io.to(`host:${roomId}`).emit('english:orders', { orders: list });
-  }
-  function emitState(io, rooms, roomId) {
-    const room = rooms[roomId]; if (!room) return;
-    io.to(roomId).emit('english:state', { status: room.status || 'waiting' });
-    io.to(`host:${roomId}`).emit('english:state', { status: room.status || 'waiting' });
   }
   function endNow(io, rooms, roomId, reason='timeup') {
     const room = rooms[roomId]; if (!room) return;
@@ -37,15 +37,27 @@ module.exports = (io, socket, rooms) => {
 
     room.status = 'ended';
 
-    // 新协议赢家
     io.to(roomId).emit('english:winner', { winner: winner?.username || null, price: winner?.amount ?? null });
-    // 兼容旧协议
-    io.to(roomId).emit('auction-ended', { winner });
-
+    io.to(roomId).emit('auction-ended', { winner }); // 兼容旧前端
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, {
       type: 'win', actor: winner?.username || '—', amount: winner?.amount, reason
     });
     emitState(io, rooms, roomId);
+  }
+
+  // no-bid 倒计时：每次出价/开始时重置
+  function startNoBidTicker(io, rooms, roomId) {
+    const room = rooms[roomId]; if (!room) return;
+    const eg = ensureEnglish(room);
+    stopTick(room);
+    eg.remaining = Number(eg.countdownSec) || 60;
+    io.to(roomId).emit('english:tick', { remaining: eg.remaining });
+    eg._tick = setInterval(() => {
+      if (room.status !== 'running') return;
+      eg.remaining = Math.max(0, (eg.remaining || 0) - 1);
+      io.to(roomId).emit('english:tick', { remaining: eg.remaining });
+      if (eg.remaining <= 0) endNow(io, rooms, roomId, 'no-bid');
+    }, 1000);
   }
 
   // ===== 入房 =====
@@ -73,16 +85,19 @@ module.exports = (io, socket, rooms) => {
     // 若已结束，补结果
     if (room.status === 'ended') {
       const winner = room.highestBidder ? { username: room.highestBidder, amount: room.currentPrice } : null;
-      socket.emit('auction-ended', { winner }); // 旧
-      socket.emit('english:winner', { winner: winner?.username || null, price: winner?.amount ?? null }); // 新
+      socket.emit('auction-ended', { winner });
+      socket.emit('english:winner', { winner: winner?.username || null, price: winner?.amount ?? null });
     }
   });
 
-  // ===== 出价 =====
+  // ===== 出价（仅 running） =====
   socket.on("place-bid", ({ roomId, amount }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== "english") return;
-    if (room.status === "ended") return;
+
+    if (room.status !== "running") {
+      return socket.emit('bid-rejected', { reason: 'NOT_STARTED' });
+    }
 
     const bidAmount = Number(amount);
     if (!Number.isFinite(bidAmount) || bidAmount <= 0) return;
@@ -120,45 +135,37 @@ module.exports = (io, socket, rooms) => {
     ensureEnglish(room);
     room.englishOrders.push({ user: socket.username || `User-${socket.id.slice(0,4)}`, amount: bidAmount, ts: Date.now() });
     broadcastOrders(io, rooms, roomId);
+
+    // 重置“无人加价”计时
+    startNoBidTicker(io, rooms, roomId);
   });
 
-  // ===== 老的手动拍锤（兼容） =====
-  socket.on("english-hammer", ({ roomId }) => {
-    const room = rooms[roomId];
-    if (!room || (room.type || '').toLowerCase() !== "english") return;
-    if (!isHost(room, socket.username)) return;
-    if (room.status === "ended") return;
-    endNow(io, rooms, roomId, 'legacy-hammer');
-  });
-
-  // ===== 新：仅设置 Countdown（不再有 startPrice） =====
-  socket.on('english:set-config', ({ roomId, countdownSec = 60 }) => {
+  // ===== 新：Apply（一次设置两个） =====
+  socket.on('english:apply', ({ roomId, price, countdownSec }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== 'english') return;
     if (!isHost(room, socket.username)) return;
+
     const eg = ensureEnglish(room);
-    eg.countdownSec = Number(countdownSec) || 60;
-    io.to(roomId).emit('english:config', { countdownSec: eg.countdownSec });
+
+    if (Number.isFinite(Number(countdownSec)) && Number(countdownSec) > 0) {
+      eg.countdownSec = Number(countdownSec);
+      io.to(roomId).emit('english:config', { countdownSec: eg.countdownSec });
+    }
+
+    // 仅在未开拍时允许设置起拍价
+    if (typeof price !== 'undefined' && room.status !== 'running') {
+      const p = Number(price);
+      if (Number.isFinite(p) && p > 0) {
+        room.currentPrice = p;
+        room.highestBidder = null;
+        io.to(roomId).emit('bid-update', { currentPrice: p, highestBidder: null });
+        io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'set-price', actor: socket.username, amount: p });
+      }
+    }
   });
 
-  // ===== 新：老师直接设置 current price（等同起拍价） =====
-  socket.on('english:set-current', ({ roomId, price }) => {
-    const room = rooms[roomId];
-    if (!room || (room.type || '').toLowerCase() !== 'english') return;
-    if (!isHost(room, socket.username)) return;
-
-    const p = Number(price);
-    if (!Number.isFinite(p) || p <= 0) return;
-
-    // 设置现价并清空最高出价者（老师设价不代表有竞拍者）
-    room.currentPrice = p;
-    room.highestBidder = null;
-
-    io.to(roomId).emit('bid-update', { currentPrice: p, highestBidder: null });
-    io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'set-price', actor: socket.username, amount: p });
-  });
-
-  // ===== 新：开始 / 停止（使用 currentPrice，不覆盖） =====
+  // ===== 开始 / 停止 =====
   socket.on('english:start', ({ roomId }) => {
     const room = rooms[roomId];
     if (!room || (room.type || '').toLowerCase() !== 'english') return;
@@ -173,15 +180,10 @@ module.exports = (io, socket, rooms) => {
       room.highestBidder = null;
       io.to(roomId).emit('bid-update', { currentPrice: room.currentPrice, highestBidder: null });
     }
-    eg.remaining = Number(eg.countdownSec) || 60;
     emitState(io, rooms, roomId);
 
-    eg._tick = setInterval(() => {
-      if (room.status !== 'running') return;
-      eg.remaining = Math.max(0, (eg.remaining || 0) - 1);
-      io.to(roomId).emit('english:tick', { remaining: eg.remaining });
-      if (eg.remaining <= 0) endNow(io, rooms, roomId, 'timeup');
-    }, 1000);
+    // 开始“无人加价”计时
+    startNoBidTicker(io, rooms, roomId);
   });
 
   socket.on('english:stop', ({ roomId }) => {

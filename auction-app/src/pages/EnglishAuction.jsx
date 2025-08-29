@@ -16,12 +16,15 @@ function EnglishAuction() {
   const [highestBidder, setHighestBidder] = useState(null);
   const [online, setOnline] = useState(0);
   const [status, setStatus] = useState('waiting'); // waiting | running | ended
-  const [countdownSec, setCountdownSec] = useState(60);
+  const [countdownSec, setCountdownSec] = useState(60); // 无人加价自动结束秒数
   const [remaining, setRemaining] = useState(null);
   const [isHost, setIsHost] = useState(false);
   const [isTeacher, setIsTeacher] = useState(false);
   const [bid, setBid] = useState('');
   const [orders, setOrders] = useState([]); // [{user, amount, ts}]
+
+  // 教师端输入
+  const [priceInput, setPriceInput] = useState('');
 
   useEffect(() => {
     let name = localStorage.getItem('username');
@@ -32,73 +35,66 @@ function EnglishAuction() {
     setUsername(name);
     setIsTeacher((localStorage.getItem('role') || '') === 'teacher');
 
-    // --- listeners ---
+    // listeners
     const onBidUpdate = ({ currentPrice, highestBidder }) => {
       if (typeof currentPrice !== 'undefined') setCurrentPrice(currentPrice);
       if (typeof highestBidder !== 'undefined') setHighestBidder(highestBidder ?? null);
     };
-    const onBudgetMine = ({ cap }) => setMyCap(cap);
+    const onBudget = ({ cap }) => setMyCap(cap);
     const onRejected = ({ reason, cap, curr }) => {
       if (reason === 'OVER_BUDGET') alert(`Amount exceeds your cap: ${cap}`);
       else if (reason === 'INVALID_AMOUNT') alert(`Amount must be greater than current price: ${curr}`);
+      else if (reason === 'NOT_STARTED') alert('The auction has not started yet. Please wait for Start.');
       else alert('Bid rejected');
     };
     const onRoomInfo = ({ isHost }) => setIsHost(!!isHost);
     const onPresence = ({ online }) => setOnline(online);
-
-    // 旧协议（兼容）
-    const onEndedOld = ({ winner }) => {
-      if (winner) alert(`Congratulations! Winner ${winner.username} won at price ${winner.amount}`);
-      else alert('No winner');
+    const onEnded = ({ winner }) => {
+      alert(winner ? `Congratulations! ${winner.username} wins at ${winner.amount}.` : 'No winner');
       setStatus('ended');
     };
-
-    // 新协议
     const onState = ({ status }) => setStatus(status || 'waiting');
     const onCfg = (c) => setCountdownSec(Number(c?.countdownSec || 60));
     const onTick = ({ remaining }) => setRemaining(remaining);
-    const onWinnerNew = ({ winner, price }) => {
-      alert(winner ? `Congratulations! ${winner} wins at ${price}.` : 'No winner');
-      setStatus('ended');
-    };
     const onOrders = ({ orders }) => setOrders(Array.isArray(orders) ? orders : []);
 
-    // --- subscribe ---
+    // subscribe
     socket.on('bid-update', onBidUpdate);
-    socket.on('your-budget', onBudgetMine);
+    socket.on('your-budget', onBudget);
     socket.on('bid-rejected', onRejected);
     socket.on('room-info', onRoomInfo);
     socket.on('presence:update', onPresence);
 
-    socket.on('auction-ended', onEndedOld);   // 旧
-    socket.on('english:state', onState);      // 新
+    socket.on('auction-ended', onEnded);
+    socket.on('english:state', onState);
     socket.on('english:config', onCfg);
     socket.on('english:tick', onTick);
-    socket.on('english:winner', onWinnerNew);
     socket.on('english:orders', onOrders);
 
-    // --- join ---
+    // join
     socket.emit('join-room', { roomId, username: name });
     socket.emit('join-english', { roomId });
 
     return () => {
       socket.off('bid-update', onBidUpdate);
-      socket.off('your-budget', onBudgetMine);
+      socket.off('your-budget', onBudget);
       socket.off('bid-rejected', onRejected);
       socket.off('room-info', onRoomInfo);
       socket.off('presence:update', onPresence);
-
-      socket.off('auction-ended', onEndedOld);
+      socket.off('auction-ended', onEnded);
       socket.off('english:state', onState);
       socket.off('english:config', onCfg);
       socket.off('english:tick', onTick);
-      socket.off('english:winner', onWinnerNew);
       socket.off('english:orders', onOrders);
     };
   }, [roomId]);
 
-  // Students: place a higher bid than current price (server validates)
+  // Students: only allowed when status === 'running'
   const handlePlaceBid = () => {
+    if (status !== 'running') {
+      alert('The auction has not started yet.');
+      return;
+    }
     const n = Number(bid);
     if (!Number.isFinite(n) || n <= 0) return;
     if (currentPrice != null && n <= Number(currentPrice)) {
@@ -112,30 +108,21 @@ function EnglishAuction() {
   // Teacher controls
   const canControl = isTeacher && isHost;
 
-  const applyCountdown = () => {
+  const applyConfig = () => {
+    const p = Number(priceInput);
     const sec = Number(countdownSec);
     if (!Number.isFinite(sec) || sec <= 0) { alert('Invalid countdown seconds'); return; }
-    socket.emit('english:set-config', { roomId, countdownSec: sec });
-  };
-
-  const applyCurrentPrice = (priceText) => {
-    const p = Number(priceText);
-    if (!Number.isFinite(p) || p <= 0) { alert('Invalid current price'); return; }
-    socket.emit('english:set-current', { roomId, price: p });
-  };
-
-  const startAuction = () => socket.emit('english:start', { roomId });
-  const stopAuction = () => {
-    if (confirm('Confirm stop the auction and hammer?')) {
-      socket.emit('english:stop', { roomId });
+    if (status !== 'running') {
+      if (!Number.isFinite(p) || p <= 0) { alert('Invalid starting price'); return; }
+      socket.emit('english:apply', { roomId, price: p, countdownSec: sec });
+    } else {
+      // 已在进行中：仅更新无人加价秒数
+      socket.emit('english:apply', { roomId, countdownSec: sec });
     }
   };
 
-  // Legacy hammer fallback（可后续删除）
-  const handleHammerOld = () => {
-    if (!confirm('End the auction now?')) return;
-    socket.emit('english-hammer', { roomId });
-  };
+  const startAuction = () => socket.emit('english:start', { roomId });
+  const stopAuction  = () => socket.emit('english:stop',  { roomId });
 
   const StatusPill = ({ value }) => (
     <Alert severity={value==='running' ? 'success' : value==='waiting' ? 'info' : 'warning'} sx={{ py: 0.5, m:0 }}>
@@ -143,25 +130,26 @@ function EnglishAuction() {
     </Alert>
   );
 
-  // 教师端用于输入 current price 的本地状态
-  const [priceInput, setPriceInput] = useState('');
-
   return (
     <Box sx={{ maxWidth: 820, mx: 'auto', mt: 4, p: 2 }}>
       <Typography variant="h5" gutterBottom>English Auction</Typography>
 
-      {/* 学生说明（与 Dutch 风格统一） */}
+      {/* 学生说明（统一风格） */}
       <Alert severity="info" sx={{ mb: 2 }}>
         <b>How to participate:</b> Enter a bid strictly higher than <b>Current Price</b> and click <i>Place Bid</i>.
-        Your personal limit is <b>My Cap</b>; the system will block bids above it.
-        The highest valid bid at the end wins. Teacher may set <b>Current Price</b>, configure <b>Countdown</b>, and start/stop the round.
+        Bidding is allowed only after the teacher clicks <b>Start</b>.
+        <ul style={{ margin: '6px 0 0 18px' }}>
+          <li><b>Current Price</b> is the <b>starting price</b> set by the teacher before the round starts.</li>
+          <li><b>Countdown (sec)</b> is a <b>no-bid window</b>: if nobody bids within this many seconds, the current highest bidder is declared the winner automatically.</li>
+          <li><b>My Cap</b> is your personal limit; bids above it will be rejected.</li>
+        </ul>
       </Alert>
 
       <Stack direction="row" spacing={3} sx={{ mb: 2 }} alignItems="center" flexWrap="wrap">
         <Typography><b>User:</b> {username}</Typography>
         <Typography><b>Online:</b> {online}</Typography>
         <Typography><b>My Cap:</b> {myCap ?? '—'}</Typography>
-        <Typography><b>Current Price:</b> {currentPrice ?? 'No bid yet'}</Typography>
+        <Typography><b>Current Price:</b> {currentPrice ?? 'Not set'}</Typography>
         <Typography><b>Highest Bidder:</b> {highestBidder ?? '—'}</Typography>
         <StatusPill value={status} />
         {typeof remaining === 'number' && <Typography><b>Time Left:</b> {remaining}s</Typography>}
@@ -173,17 +161,18 @@ function EnglishAuction() {
           type="number"
           value={bid}
           onChange={(e) => setBid(e.target.value)}
-          placeholder="Enter your bid"
+          placeholder={status === 'running' ? 'Enter your bid' : 'Disabled until Start'}
+          disabled={status !== 'running'}
           style={{ flex:1, padding: 8 }}
         />
-        <Button variant="contained" onClick={handlePlaceBid} sx={{ px: 3 }}>
-          Place Bid
+        <Button variant="contained" onClick={handlePlaceBid} disabled={status !== 'running'} sx={{ px: 3 }}>
+          Bid
         </Button>
       </Stack>
 
       {/* 订单簿（师生共视） */}
       <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 2, mb: 2 }}>
-        <Typography variant="subtitle1" gutterBottom>Order Records (Highest first)</Typography>
+        <Typography variant="subtitle1" gutterBottom>Order</Typography>
         {orders.length === 0 ? (
           <Typography variant="body2" color="text.secondary">No orders yet.</Typography>
         ) : (
@@ -207,17 +196,20 @@ function EnglishAuction() {
       {isTeacher && isHost && (
         <Box sx={{ border: '1px solid #ddd', borderRadius: 1, p: 2, mt: 2 }}>
           <Alert severity="success" sx={{ mb: 2 }}>
-            <b>Teacher guide:</b> Set <b>Current Price</b>, configure <b>Countdown</b>, then <b>Start</b>. Use <b>Stop</b> to end early.
+            <b>Teacher guide:</b> Set <b>Current Price</b> (this is the <b>starting price</b>) and <b>Countdown (sec)</b> (the <b>no-bid window</b>).
+            Click <b>Apply</b> to save, then <b>Start</b> to begin. Each valid bid resets the countdown.
+            Click <b>Stop</b> to end the auction early.
           </Alert>
 
           <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: 'wrap' }}>
             <Box sx={{ flex: 1, minWidth: 200 }}>
-              <Typography variant="caption" sx={{ fontWeight: 600 }}>Current Price (set by teacher)</Typography>
+              <Typography variant="caption" sx={{ fontWeight: 600 }}>Current Price (starting price)</Typography>
               <input
                 type="number"
                 value={priceInput}
                 onChange={(e)=>setPriceInput(e.target.value)}
                 placeholder="e.g. 100"
+                disabled={status === 'running'} // 开拍后不再允许修改起拍价
                 style={{ width: '100%', padding: 8 }}
               />
             </Box>
@@ -234,20 +226,10 @@ function EnglishAuction() {
           </Stack>
 
           <Stack direction="row" spacing={2}>
-            <Button variant="outlined" onClick={() => applyCurrentPrice(priceInput)}>Set Current Price</Button>
-            <Button variant="outlined" onClick={applyCountdown}>Set Countdown</Button>
-            <Button variant="contained" onClick={startAuction}>Start</Button>
-            <Button variant="outlined" color="warning" onClick={stopAuction}>Stop</Button>
+            <Button variant="outlined" onClick={applyConfig}>Apply</Button>
+            <Button variant="contained" onClick={startAuction} disabled={status === 'running'}>Start</Button>
+            <Button variant="outlined" color="warning" onClick={stopAuction} disabled={status !== 'running'}>Stop</Button>
           </Stack>
-
-          {/* 旧 hammer 兜底（可删） */}
-          <Button
-            variant="contained"
-            onClick={handleHammerOld}
-            sx={{ width: '100%', mt: 2, background:'#1976d2' }}
-          >
-            Hammer (End Auction) — Legacy
-          </Button>
         </Box>
       )}
     </Box>

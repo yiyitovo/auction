@@ -183,7 +183,7 @@ function SealedAuction() {
           </Button>
 
           <Divider sx={{ my: 2 }} />
-          <Typography variant="subtitle2" gutterBottom>Orders (Host only)</Typography>
+          <Typography variant="subtitle2" gutterBottom>Orders</Typography>
           {orders.length === 0 ? (
             <Typography variant="body2" color="text.secondary">No orders yet.</Typography>
           ) : (

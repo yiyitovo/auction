@@ -217,7 +217,7 @@ export default function DoubleAuction() {
       {/* 订单簿（CDA：全员；Call：仅教师可见） */}
       {canSeeBook && (
         <Box sx={{ border: '1px solid #eee', borderRadius: 1, p: 2, mb: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>Order Book</Typography>
+          <Typography variant="subtitle2" gutterBottom>Order</Typography>
           {book.buys.length + book.sells.length === 0 ? (
             <Typography variant="body2" color="text.secondary">No orders yet.</Typography>
           ) : (
