@@ -30,7 +30,7 @@ function DutchAuction() {
     setIsTeacher((localStorage.getItem('role') || '') === 'teacher');
 
     const onDutchPrice = ({ price }) => setCurrentPrice(price);
-    const onEnd = ({ winner }) => { alert(winner ? `Winner: ${winner.username} @ ${winner.price}` : 'No winner'); };
+    const onEnd = ({ winner }) => { alert(winner ? `Congratulations！Winner ${winner.username} won at price ${winner.price}` : 'No winner'); };
     const onState = ({ status, cfg }) => {
       if (cfg) setCfg({
         step: Number(cfg.step || 1),

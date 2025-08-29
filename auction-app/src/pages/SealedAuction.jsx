@@ -190,7 +190,7 @@ function SealedAuction() {
       {/* Winner display */}
       <Box sx={{ mt: 2 }}>
         {winner
-          ? <Typography>Winner: <b>{winner.username}</b>, Amount: <b>{winner.amount}</b> <i>({winner.pricing})</i></Typography>
+          ? <Typography>Congratulations！Winner <b>{winner.username}</b>won at price <b>{winner.amount}</b> <i>({winner.pricing})</i></Typography>
           : <Typography>No winner yet.</Typography>
         }
       </Box>

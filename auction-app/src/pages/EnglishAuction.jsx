@@ -36,7 +36,7 @@ function EnglishAuction() {
     };
     const onRoomInfo = ({ isHost }) => setIsHost(!!isHost);
     const onEnded = ({ winner }) => {
-      if (winner) alert(`Winner: ${winner.username} @ ${winner.amount}`);
+      if (winner) alert(`Congratulations！Winner ${winner.username} won at price ${winner.amount}`);
       else alert('No winner');
     };
 
