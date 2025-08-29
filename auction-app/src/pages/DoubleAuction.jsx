@@ -103,7 +103,7 @@ export default function DoubleAuction() {
         <Typography variant="h5">Double Auction</Typography>
         <Chip
           size="small"
-          label={mode === 'cda' ? 'CDA (Continuous)' : 'Call (Uniform Price)'}
+          label={mode === 'cda' ? 'CDA' : 'Call'}
         />
       </Stack>
 
@@ -118,14 +118,14 @@ export default function DoubleAuction() {
           </>
         ) : (
           <>
-            This is a <b>Call / Uniform-Price Double Auction</b>. Quotes are collected while the
+            This is a <b>Call Double Auction</b>. Quotes are collected while the
             round is running. When the teacher clicks <i>Stop</i>, all feasible trades clear at a
             single <i>uniform price</i>.
           </>
         )}
         <ul style={{ margin: '6px 0 0 18px' }}>
           <li><b>My Cap</b> is your personal budget ceiling — your quote must not exceed it.</li>
-          <li>Your role is <b>{role ? role.toUpperCase() : 'assigning…'}</b>. Enter a {role === 'sell' ? 'sell (ask)' : 'buy (bid)'} price and submit.</li>
+          <li>Your role is <b>{role ? role.toUpperCase() : 'assigning…'}</b>. Enter a {role === 'sell' ? 'seller' : 'buyer'} price and submit.</li>
         </ul>
       </Alert>
 
@@ -134,7 +134,7 @@ export default function DoubleAuction() {
         <b>User:</b> {username} &nbsp; | &nbsp;
         <b>Role:</b> {role ? role.toUpperCase() : '—'} &nbsp; | &nbsp;
         <b>My Cap:</b> {myCap ?? '—'} &nbsp; | &nbsp;
-        <b>Mode:</b> {mode === 'cda' ? 'CDA (Continuous)' : 'Call (Uniform Price)'}
+        <b>Mode:</b> {mode === 'cda' ? 'CDA' : 'Call'}
       </Typography>
 
       {/* 状态提示 */}
@@ -149,7 +149,7 @@ export default function DoubleAuction() {
           inputProps={{ min: 0, step: 'any' }}
           value={price}
           onChange={(e) => setPrice(e.target.value)}
-          placeholder={role === 'sell' ? 'Enter your ask (sell price)' : 'Enter your bid (buy price)'}
+          placeholder={role === 'sell' ? 'Enter your ask' : 'Enter your bid'}
           fullWidth
           disabled={status !== 'running' || !role}
         />
@@ -158,7 +158,7 @@ export default function DoubleAuction() {
           onClick={submit}
           disabled={status !== 'running' || !role}
         >
-          {role === 'sell' ? 'Submit Sell' : 'Submit Buy'}
+          {role === 'sell' ? 'Submit' : 'Submit'}
         </Button>
       </Box>
 
@@ -178,7 +178,7 @@ export default function DoubleAuction() {
 
       {/* 成交列表：与 Sealed 的 Orders 网格风格统一 */}
       <Box sx={{ mt: 2 }}>
-        <Typography variant="subtitle2" gutterBottom>Trades (Live)</Typography>
+        <Typography variant="subtitle2" gutterBottom>Orders</Typography>
         {trades.length === 0 ? (
           <Typography variant="body2" color="text.secondary">No trades yet.</Typography>
         ) : (
