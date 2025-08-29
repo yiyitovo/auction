@@ -1,4 +1,4 @@
-// src/pages/SealedAuction.jsx — one-bid, EN instructions, show pricing & phases + Online & Submitted
+// src/pages/SealedAuction.jsx — winner uses alert popup; remove bottom winner area
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -14,7 +14,7 @@ function SealedAuction() {
   const [pricing, setPricing] = useState('first'); // 'first' | 'second'
   const [status, setStatus] = useState('collecting'); // collecting | reveal | ended
 
-  // 新增：在线人数与完成出价人数
+  // Online & submitted counts
   const [online, setOnline] = useState(0);
   const [submitted, setSubmitted] = useState(0);
 
@@ -24,7 +24,6 @@ function SealedAuction() {
 
   const [isHost, setIsHost] = useState(false);
   const [orders, setOrders] = useState([]); // host-only [{price,name,time}]
-  const [winner, setWinner] = useState(null);
 
   useEffect(() => {
     let name = localStorage.getItem('username');
@@ -61,29 +60,34 @@ function SealedAuction() {
       else alert('Bid rejected.');
     };
 
+    // ★ Winner 弹窗；不再在页面底部渲染
     const onEnd = ({ winner }) => {
-      setWinner(winner || null);
       setStatus('ended');
+      if (winner && winner.username) {
+        alert(`Congratulations! Winner ${winner.username} won at price ${winner.amount}`);
+      } else {
+        alert('No winner');
+      }
     };
 
-    // 新增：在线人数 & 完成出价人数
+    // Online & submitted
     const onPresence = ({ online }) => setOnline(online);
     const onSealedStats = ({ submitted }) => setSubmitted(submitted);
 
     socket.on('your-budget', onBudget);
     socket.on('sealed-state', onState);
     socket.on('you-are-host', onYouAreHost);
-    socket.on('order', onOrders);               // host-only
+    socket.on('order', onOrders);                 // host-only
     socket.on('sealed-submitted', onSubmittedAck); // ack
     socket.on('bid-rejected', onRejected);
     socket.on('auction-ended', onEnd);
 
-    socket.on('presence:update', onPresence);   // 新增
-    socket.on('sealed:stats', onSealedStats);   // 新增
+    socket.on('presence:update', onPresence);
+    socket.on('sealed:stats', onSealedStats);
 
     // join room
     socket.emit('join-room', { roomId, username: name });
-    socket.emit('join-sealed', { roomId });     // 后端会回发 sealed:stats
+    socket.emit('join-sealed', { roomId }); // backend will reply sealed:stats
     socket.emit('am-i-host', { roomId });
 
     return () => {
@@ -94,9 +98,8 @@ function SealedAuction() {
       socket.off('sealed-submitted', onSubmittedAck);
       socket.off('bid-rejected', onRejected);
       socket.off('auction-ended', onEnd);
-
-      socket.off('presence:update', onPresence); // 新增
-      socket.off('sealed:stats', onSealedStats); // 新增
+      socket.off('presence:update', onPresence);
+      socket.off('sealed:stats', onSealedStats);
     };
   }, [roomId]);
 
@@ -112,7 +115,6 @@ function SealedAuction() {
     socket.emit('reveal-bids', { roomId });
   };
 
-  // Phase hint
   const phaseHint =
     status === 'collecting' ? 'Collecting sealed bids…'
     : status === 'reveal'   ? 'Revealing winner…'
@@ -205,14 +207,7 @@ function SealedAuction() {
           )}
         </Box>
       )}
-
-      {/* Winner display */}
-      <Box sx={{ mt: 2 }}>
-        {winner
-          ? <Typography>Congratulations！Winner <b>{winner.username}</b> won at price <b>{winner.amount}</b> <i>({winner.pricing})</i></Typography>
-          : <Typography>No winner yet.</Typography>
-        }
-      </Box>
+      {/* ⬆️ 注意：不再有底部 Winner 区域 */}
     </Box>
   );
 }
