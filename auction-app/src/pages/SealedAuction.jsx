@@ -1,4 +1,4 @@
-// src/pages/SealedAuction.jsx — one-bid, EN instructions, show pricing & phases
+// src/pages/SealedAuction.jsx — one-bid, EN instructions, show pricing & phases + Online & Submitted
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -13,6 +13,10 @@ function SealedAuction() {
   const [myCap, setMyCap] = useState(null);
   const [pricing, setPricing] = useState('first'); // 'first' | 'second'
   const [status, setStatus] = useState('collecting'); // collecting | reveal | ended
+
+  // 新增：在线人数与完成出价人数
+  const [online, setOnline] = useState(0);
+  const [submitted, setSubmitted] = useState(0);
 
   const [bid, setBid] = useState('');
   const [mySubmitted, setMySubmitted] = useState(false);
@@ -41,7 +45,7 @@ function SealedAuction() {
     };
     const onOrders = (list) => { if (Array.isArray(list)) setOrders(list); };
 
-    const onSubmitted = ({ ok }) => {
+    const onSubmittedAck = ({ ok }) => {
       if (ok) {
         setMySubmitted(true);
         setMySubmittedAmount(Number(bid));
@@ -59,19 +63,27 @@ function SealedAuction() {
 
     const onEnd = ({ winner }) => {
       setWinner(winner || null);
+      setStatus('ended');
     };
+
+    // 新增：在线人数 & 完成出价人数
+    const onPresence = ({ online }) => setOnline(online);
+    const onSealedStats = ({ submitted }) => setSubmitted(submitted);
 
     socket.on('your-budget', onBudget);
     socket.on('sealed-state', onState);
     socket.on('you-are-host', onYouAreHost);
     socket.on('order', onOrders);               // host-only
-    socket.on('sealed-submitted', onSubmitted); // ack
+    socket.on('sealed-submitted', onSubmittedAck); // ack
     socket.on('bid-rejected', onRejected);
     socket.on('auction-ended', onEnd);
 
+    socket.on('presence:update', onPresence);   // 新增
+    socket.on('sealed:stats', onSealedStats);   // 新增
+
     // join room
     socket.emit('join-room', { roomId, username: name });
-    socket.emit('join-sealed', { roomId });
+    socket.emit('join-sealed', { roomId });     // 后端会回发 sealed:stats
     socket.emit('am-i-host', { roomId });
 
     return () => {
@@ -79,11 +91,14 @@ function SealedAuction() {
       socket.off('sealed-state', onState);
       socket.off('you-are-host', onYouAreHost);
       socket.off('order', onOrders);
-      socket.off('sealed-submitted', onSubmitted);
+      socket.off('sealed-submitted', onSubmittedAck);
       socket.off('bid-rejected', onRejected);
       socket.off('auction-ended', onEnd);
+
+      socket.off('presence:update', onPresence); // 新增
+      socket.off('sealed:stats', onSealedStats); // 新增
     };
-  }, [roomId, bid]);
+  }, [roomId]);
 
   // === student submit ===
   const handleSubmitBid = () => {
@@ -116,12 +131,16 @@ function SealedAuction() {
           <li><b>My Cap</b> is your personal budget ceiling — your bid must not exceed it.</li>
           <li>You can submit <b>only once</b>. After submission, you cannot edit your bid.</li>
           <li>If multiple highest bids are tied, the winner is selected <b>at random</b> with equal probability among the tied bidders.</li>
-          <li>If it is Second-Price, the winner pays the highest losing bid (if none exists, pays their own bid).</li>
+          <li>If it is Second-Price, the winner pays the second highest bid (if none exists, pays their own bid).</li>
         </ul>
       </Alert>
 
       <Typography sx={{ mb: 1 }}>
-        <b>User:</b> {username} &nbsp; | &nbsp; <b>My Cap:</b> {myCap ?? '—'} &nbsp; | &nbsp; <b>Pricing:</b> {pricing === 'second' ? 'Second-Price' : 'First-Price'}
+        <b>User:</b> {username}
+        &nbsp; | &nbsp; <b>Online:</b> {online}
+        &nbsp; | &nbsp; <b>Submitted:</b> {submitted}
+        &nbsp; | &nbsp; <b>My Cap:</b> {myCap ?? '—'}
+        &nbsp; | &nbsp; <b>Pricing:</b> {pricing === 'second' ? 'Second-Price' : 'First-Price'}
       </Typography>
       <Alert severity={status === 'collecting' ? 'success' : status === 'ended' ? 'info' : 'warning'} sx={{ mb: 2 }}>
         {phaseHint}
@@ -160,7 +179,7 @@ function SealedAuction() {
             bids are hidden from students. Click <b>Reveal Winner</b> to finalize.
           </Alert>
           <Button variant="contained" onClick={handleReveal} disabled={status !== 'collecting'}>
-            Reveal Winner (Host)
+            Reveal Winner
           </Button>
 
           <Divider sx={{ my: 2 }} />
@@ -190,7 +209,7 @@ function SealedAuction() {
       {/* Winner display */}
       <Box sx={{ mt: 2 }}>
         {winner
-          ? <Typography>Congratulations！Winner <b>{winner.username}</b>won at price <b>{winner.amount}</b> <i>({winner.pricing})</i></Typography>
+          ? <Typography>Congratulations！Winner <b>{winner.username}</b> won at price <b>{winner.amount}</b> <i>({winner.pricing})</i></Typography>
           : <Typography>No winner yet.</Typography>
         }
       </Box>

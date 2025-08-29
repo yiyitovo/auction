@@ -1,4 +1,4 @@
-// auctions/sealed.js — v2025-08-17
+// auctions/sealed.js — v2025-08-29 with Online & Submitted stats
 module.exports = (io, socket, rooms) => {
   // ========== 工具 ==========
   function isSocketHost(sock, room, roomId) {
@@ -26,6 +26,14 @@ module.exports = (io, socket, rooms) => {
     io.to(`host:${roomId}`).emit('order', list);
   }
 
+  // ★ 新增：广播“完成出价人数”（以唯一用户名计数）
+  function broadcastSealedStats(io, rooms, roomId) {
+    const room = rooms[roomId]; if (!room) return;
+    const submitted = new Set((room.bids || []).map(b => b.username)).size;
+    io.to(roomId).emit('sealed:stats', { submitted });
+    io.to(`host:${roomId}`).emit('sealed:stats', { submitted });
+  }
+
   // ========== 事件 ==========
   socket.on("join-sealed", ({ roomId }) => {
     const room = rooms[roomId];
@@ -40,6 +48,9 @@ module.exports = (io, socket, rooms) => {
 
     // 教师端刚进来就推一次订单列表
     if (isSocketHost(socket, room, roomId)) sendOrdersToHost(io, rooms, roomId);
+
+    // ★ 新增：补发当前“完成出价人数”
+    broadcastSealedStats(io, rooms, roomId);
   });
 
   // 供前端自检是否是 host（用于显示“Reveal/配置”）
@@ -80,7 +91,7 @@ module.exports = (io, socket, rooms) => {
     const now = new Date().toISOString();
     room.bids = room.bids || [];
 
-    // 覆盖该用户的最新出价 & 时间
+    // 覆盖该用户的最新出价 & 时间（如果你想禁止多次，改成：若已存在则 return ALREADY_BID）
     const idx = room.bids.findIndex(b => b.username === username);
     if (idx >= 0) room.bids[idx] = { username, amount: a, time: now };
     else room.bids.push({ username, amount: a, time: now });
@@ -93,6 +104,9 @@ module.exports = (io, socket, rooms) => {
 
     // 给教师端推实时订单列表
     sendOrdersToHost(io, rooms, roomId);
+
+    // ★ 新增：广播已完成出价人数
+    broadcastSealedStats(io, rooms, roomId);
 
     socket.emit("sealed-submitted", { ok: true });
   });
@@ -111,7 +125,6 @@ module.exports = (io, socket, rooms) => {
     // 排序：金额降序；同价按时间升序（先到先得）
     const bids = (room.bids || []).slice().sort((a, b) => {
       if (b.amount !== a.amount) return b.amount - a.amount;
-      // ISO 字符串可直接比较；更保险用 Date 比较
       return new Date(a.time) - new Date(b.time);
     });
 
@@ -122,9 +135,9 @@ module.exports = (io, socket, rooms) => {
     if (winner) {
       if (cfg.pricing === 'second') {
         const second = bids[1];
-        payPrice = second ? second.amount : winner.amount; // 若不存在次高价，回退为赢家出价
+        payPrice = second ? second.amount : winner.amount;
       } else {
-        payPrice = winner.amount; // first-price
+        payPrice = winner.amount;
       }
     }
 

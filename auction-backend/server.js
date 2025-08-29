@@ -63,6 +63,7 @@ const io = new Server(server, {
  */
 const rooms = {};
 
+
 // ======= 身份 / 权限（统一显示 username） =======
 function labelFor(room, username, audience) {
   return username || 'Unknown';
@@ -132,6 +133,17 @@ function attachPrivacyHelpers(io) {
   io.__privacy = { logAndBroadcast, emitBidUpdate, labelFor, viewFor, policy };
 }
 attachPrivacyHelpers(io);
+
+// === presence: 仅计算并广播，不修改 rooms 结构 ===
+function broadcastOnline(io, rooms, roomId) {
+  const room = rooms[roomId];
+  if (!room) return;
+  const online = (room.participants || []).length;
+  // 同时给参与端和房主端，保持你现在的频道习惯
+  io.to(roomId).emit('presence:update', { online });
+  io.to(`host:${roomId}`).emit('presence:update', { online });
+}
+
 
 // =============== 登录 / 注册 ===============
 app.post("/login", async (req, res) => {
@@ -316,6 +328,9 @@ io.on("connection", (socket) => {
 
     // 记录加入动态
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'join', actor: socket.username });
+    
+    // ✅ 新增：广播当前在线人数
+    broadcastOnline(io, rooms, roomId);
   });
 
   // ✅ 安全退出
@@ -328,6 +343,7 @@ io.on("connection", (socket) => {
     socket.leave(roomId);
     room.participants = (room.participants || []).filter(p => p.socketId !== socket.id);
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
+    broadcastOnline(io, rooms, roomId);
   });
 
   // 四类拍卖
@@ -341,6 +357,7 @@ io.on("connection", (socket) => {
     if (!roomId || !rooms[roomId]) return;
     rooms[roomId].participants = rooms[roomId].participants.filter(p => p.socketId !== socket.id);
     io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'leave', actor: username || 'Unknown' });
+    broadcastOnline(io, rooms, roomId);
   });
 });
 

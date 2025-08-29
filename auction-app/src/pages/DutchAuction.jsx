@@ -15,6 +15,7 @@ function DutchAuction() {
   const [currentPrice, setCurrentPrice] = useState(null);
   const [cfg, setCfg] = useState({ step: 1, intervalMs: 1000, minPrice: 0, intervalSec: 1 });
   const [status, setStatus] = useState('waiting');
+  const [online, setOnline] = useState(0);        // ★ 新增：在线人数
   const [isHost, setIsHost] = useState(false);
   const [isTeacher, setIsTeacher] = useState(false);
   const [budgets, setBudgets] = useState([]); // [{name,cap}]
@@ -30,7 +31,12 @@ function DutchAuction() {
     setIsTeacher((localStorage.getItem('role') || '') === 'teacher');
 
     const onDutchPrice = ({ price }) => setCurrentPrice(price);
-    const onEnd = ({ winner }) => { alert(winner ? `Congratulations！Winner ${winner.username} won at price ${winner.price}` : 'No winner'); };
+    const onEnd = ({ winner }) => {               // ★ 修复：结束时同步前端状态
+      alert(winner ? `Congratulations！Winner ${winner.username} won at price ${winner.price}` : 'No winner');
+      setStatus('ended');
+      setMsg('Ended');
+    };
+    const onPresence = ({ online }) => setOnline(online); // ★ 新增：presence
     const onState = ({ status, cfg }) => {
       if (cfg) setCfg({
         step: Number(cfg.step || 1),
@@ -57,6 +63,7 @@ function DutchAuction() {
     socket.on('bid-rejected', onRejected);
     socket.on('your-budget', onBudgetMine);
     socket.on('budget-list', onBudgetList);
+    socket.on('presence:update', onPresence);     // ★ 新增：presence
 
     socket.emit('join-room', { roomId, username: name });
     socket.emit('join-dutch', { roomId });
@@ -69,6 +76,7 @@ function DutchAuction() {
       socket.off('bid-rejected', onRejected);
       socket.off('your-budget', onBudgetMine);
       socket.off('budget-list', onBudgetList);
+      socket.off('presence:update', onPresence);  // ★ 新增：presence
     };
   }, [roomId]);
 
@@ -119,6 +127,7 @@ function DutchAuction() {
 
       <Stack direction="row" spacing={3} sx={{ mb: 2 }} alignItems="center" flexWrap="wrap">
         <Typography><b>User:</b> {username}</Typography>
+        <Typography><b>Online People:</b> {online}</Typography> {/* ★ 新增显示 */}
         <Typography><b>My Cap:</b> {myCap ?? '—'}</Typography>
         <Typography><b>Current Price:</b> {currentPrice ?? 'Not set'}</Typography>
         {msg && <Alert severity={status==='in-progress' ? 'success' : 'warning'} sx={{ py: 0.5, m:0 }}>{msg}</Alert>}

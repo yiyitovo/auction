@@ -1,13 +1,27 @@
-// auctions/dutch.js  — v2025-08-17
+// auctions/dutch.js — fixed end-state + budgets + safe timer
 module.exports = (io, socket, rooms) => {
   // ==== 工具 ====
-  function isHost(room, username) { return !!room && !!username && room.owner === username; }
+  function isHost(room, username) {
+    return !!room && !!username && room.owner === username;
+  }
 
   function stopDutchTimer(room) {
     if (room && room.__dutchTimer) {
       clearInterval(room.__dutchTimer);
       room.__dutchTimer = null;
     }
+  }
+
+  function endDutch(io, rooms, roomId, winner) {
+    const room = rooms[roomId];
+    if (!room) return;
+    // 统一“结束”：停表、置状态、可记录赢家，并双广播
+    stopDutchTimer(room);
+    room.status = "ended";
+    if (winner) room.winner = winner;
+
+    io.to(roomId).emit("dutch-state", { status: room.status, cfg: room.dutchCfg });
+    io.to(roomId).emit("auction-ended", { winner: room.winner || null });
   }
 
   function broadcastBudgets(io, rooms, roomId) {
@@ -21,6 +35,8 @@ module.exports = (io, socket, rooms) => {
   function startDutchTimer(io, rooms, roomId) {
     const room = rooms[roomId];
     if (!room) return;
+
+    // 先停旧的，防重复时钟
     stopDutchTimer(room);
 
     const cfg = room.dutchCfg || {};
@@ -32,11 +48,11 @@ module.exports = (io, socket, rooms) => {
     if (!Number.isFinite(room.currentPrice)) return;
 
     room.status = "in-progress";
+    io.to(roomId).emit("dutch-state", { status: room.status, cfg: room.dutchCfg });
+
     room.__dutchTimer = setInterval(() => {
-      if (room.status === "ended") {
-        stopDutchTimer(room);
-        return;
-      }
+      if (room.status === "ended") { stopDutchTimer(room); return; } // 双保险
+
       let next = Number(room.currentPrice) - step;
       if (!Number.isFinite(next)) next = 0;
       if (next < minPrice) next = minPrice;
@@ -46,7 +62,7 @@ module.exports = (io, socket, rooms) => {
       io.to(roomId).emit("dutch-price", { price: next });
       io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'clock', price: next });
 
-      // 到底价后自动暂停
+      // 到底价后自动暂停（不是结束）
       if (next <= minPrice) {
         stopDutchTimer(room);
         room.status = "paused";
@@ -64,14 +80,18 @@ module.exports = (io, socket, rooms) => {
     room.status = room.status || 'waiting';
     room.dutchCfg = room.dutchCfg || { step: 1, intervalMs: 1000, minPrice: 0 };
 
-    // 同步状态
+    // 同步当前价与状态
     if (room.currentPrice != null) socket.emit("dutch-price", { price: room.currentPrice });
     socket.emit("dutch-state", { status: room.status, cfg: room.dutchCfg });
 
     // 广播预算列表（所有人可见）
     broadcastBudgets(io, rooms, roomId);
 
-    if (room.status === "ended" && room.winner) socket.emit("auction-ended", { winner: room.winner });
+    // 若已结束，补结果并明确下发 ended 状态
+    if (room.status === "ended") {
+      socket.emit("dutch-state", { status: 'ended', cfg: room.dutchCfg });
+      if (room.winner) socket.emit("auction-ended", { winner: room.winner });
+    }
   });
 
   // ==== 老 API：手动设当前价（仅房主） ====
@@ -128,7 +148,6 @@ module.exports = (io, socket, rooms) => {
     if (!room || (room.type || '').toLowerCase() !== "dutch") return;
     if (!isHost(room, socket.username)) return;
     startDutchTimer(io, rooms, roomId);
-    io.to(roomId).emit("dutch-state", { status: rooms[roomId].status, cfg: rooms[roomId].dutchCfg });
   });
 
   socket.on("dutch-stop", ({ roomId }) => {
@@ -168,17 +187,15 @@ module.exports = (io, socket, rooms) => {
         return socket.emit('bid-rejected', { reason: 'OVER_BUDGET', cap });
       }
 
-      // 宣布胜者
-      room.status = "ended";
-      room.winner = { username, price: priceNow };
-      stopDutchTimer(room);
+      // 宣布胜者（统一处理，保证状态/计时器/事件一致）
+      const winner = { username, price: priceNow };
+      endDutch(io, rooms, roomId, winner);
 
+      // 记账与审计
       room.bidHistory = room.bidHistory || [];
       room.bidHistory.push({
         username, amount: priceNow, time: new Date().toISOString(), action: "dutch-accept"
       });
-
-      io.to(roomId).emit("auction-ended", { winner: room.winner });
       io.__privacy?.logAndBroadcast?.(io, rooms, roomId, { type: 'accept', actor: username, amount: priceNow });
     } finally {
       room.__accepting = false;

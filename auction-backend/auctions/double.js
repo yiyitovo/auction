@@ -1,9 +1,11 @@
-// auctions/double.js — simple classroom double auction
+// auctions/double.js — classroom double auction with order book & teacher submit
 // - Mode fixed at room creation: 'cda' (continuous) | 'call' (uniform price)
-// - Students auto-assigned Buyer/Seller on join (balance the counts)
-// - Teacher can only start/stop; stopping in 'call' does the clearing
-// - No public order book / best-quote events; only trades are broadcast
-// - Always display username
+// - Students auto-assigned Buyer/Seller on join (host excluded)
+// - Teacher can start/stop AND submit quotes (choose buy/sell on UI)
+// - Order book:
+//    * CDA: visible to ALL (students + teacher)
+//    * Call: visible to TEACHER ONLY
+// - Trades are always broadcast to all
 
 module.exports = (io, socket, rooms) => {
   const now = () => Date.now();
@@ -59,6 +61,21 @@ module.exports = (io, socket, rooms) => {
     return side;
   }
 
+  // --- NEW: broadcast order book (visibility depends on mode) ---
+  function broadcastBook(roomId) {
+    const room = rooms[roomId]; if (!room) return;
+    sortBooks(room);
+    const payload = {
+      buys: room.buys.map(o => ({ price: o.price, name: o.username, time: new Date(o.ts).toISOString() })),
+      sells: room.sells.map(o => ({ price: o.price, name: o.username, time: new Date(o.ts).toISOString() }))
+    };
+    if ((room.double.mode || 'cda') === 'cda') {
+      io.to(roomId).emit('double-book', payload);                // CDA: everyone sees
+    } else {
+      io.to(`host:${roomId}`).emit('double-book', payload);      // Call: teacher-only
+    }
+  }
+
   // CDA: trade at resting order price
   function matchCDA(roomId) {
     const room = rooms[roomId]; if (!room) return;
@@ -84,6 +101,9 @@ module.exports = (io, socket, rooms) => {
     }
 
     if (trades.length) io.to(roomId).emit('double-match', trades);
+
+    // update book after matching
+    broadcastBook(roomId);
   }
 
   // Call: uniform-price clearing at stop
@@ -97,6 +117,8 @@ module.exports = (io, socket, rooms) => {
     while (k < B.length && k < S.length && B[k].price >= S[k].price) k++;
     if (k === 0) {
       io.to(roomId).emit('double-match', []);
+      // nothing traded, but still broadcast current book to teacher
+      broadcastBook(roomId);
       return;
     }
 
@@ -115,6 +137,9 @@ module.exports = (io, socket, rooms) => {
     room.sells = room.sells.filter(o => !sSet.has(o.id));
 
     io.to(roomId).emit('double-match', trades);
+
+    // update book after clearing
+    broadcastBook(roomId);
   }
 
   // ---------- events ----------
@@ -129,7 +154,12 @@ module.exports = (io, socket, rooms) => {
     const side = autoAssignRole(room, uname);
     if (side) io.to(socket.id).emit('double-side', { side });
 
+    // host 频道加入（server.js 已在 join-room 时处理；这里不重复）
+
     emitState(roomId);
+
+    // 推送当前订单簿（CDA: 所有人；Call: 老师）
+    broadcastBook(roomId);
   });
 
   // buy
@@ -139,18 +169,24 @@ module.exports = (io, socket, rooms) => {
     if (room.double.status !== 'running') { io.to(socket.id).emit('bid-rejected',{reason:'NOT_RUNNING'}); return; }
 
     const uname = socket.username || `User-${socket.id.slice(0,4)}`;
-    if ((room.roles?.[uname] || null) !== 'buy') {
-      return io.to(socket.id).emit('bid-rejected', { reason: (room.roles?.[uname] ? 'SIDE_MISMATCH' : 'NO_SIDE') });
-    }
-
     const p = Number(price);
     if (!Number.isFinite(p) || p <= 0) return;
+
+    // host 可提交，不受角色限制；学生需 buy 角色
+    if (!isHost(room, socket)) {
+      if ((room.roles?.[uname] || null) !== 'buy') {
+        return io.to(socket.id).emit('bid-rejected', { reason: (room.roles?.[uname] ? 'SIDE_MISMATCH' : 'NO_SIDE') });
+      }
+    }
 
     const cap = room.balances?.[uname];
     if (cap != null && p > cap) return io.to(socket.id).emit('bid-rejected', { reason: 'OVER_BUDGET', cap });
 
     room.buys.push({ id:`b_${Date.now()}_${Math.random()}`, username: uname, price: p, ts: now() });
     recordOrder(io, rooms, roomId, uname, 'buy', p);
+
+    // 广播订单簿
+    broadcastBook(roomId);
 
     if (room.double.mode === 'cda') matchCDA(roomId);
   });
@@ -162,18 +198,24 @@ module.exports = (io, socket, rooms) => {
     if (room.double.status !== 'running') { io.to(socket.id).emit('bid-rejected',{reason:'NOT_RUNNING'}); return; }
 
     const uname = socket.username || `User-${socket.id.slice(0,4)}`;
-    if ((room.roles?.[uname] || null) !== 'sell') {
-      return io.to(socket.id).emit('bid-rejected', { reason: (room.roles?.[uname] ? 'SIDE_MISMATCH' : 'NO_SIDE') });
-    }
-
     const p = Number(price);
     if (!Number.isFinite(p) || p <= 0) return;
+
+    // host 可提交，不受角色限制；学生需 sell 角色
+    if (!isHost(room, socket)) {
+      if ((room.roles?.[uname] || null) !== 'sell') {
+        return io.to(socket.id).emit('bid-rejected', { reason: (room.roles?.[uname] ? 'SIDE_MISMATCH' : 'NO_SIDE') });
+      }
+    }
 
     const cap = room.balances?.[uname];
     if (cap != null && p > cap) return io.to(socket.id).emit('bid-rejected', { reason: 'OVER_BUDGET', cap });
 
     room.sells.push({ id:`s_${Date.now()}_${Math.random()}`, username: uname, price: p, ts: now() });
     recordOrder(io, rooms, roomId, uname, 'sell', p);
+
+    // 广播订单簿
+    broadcastBook(roomId);
 
     if (room.double.mode === 'cda') matchCDA(roomId);
   });
@@ -185,6 +227,7 @@ module.exports = (io, socket, rooms) => {
     ensureBook(room);
     room.double.status = 'running';
     emitState(roomId);
+    broadcastBook(roomId);
   });
 
   socket.on('double-stop', ({ roomId }) => {
@@ -196,5 +239,6 @@ module.exports = (io, socket, rooms) => {
     if (room.double.mode === 'call') clearCall(roomId);
     room.double.status = 'paused';
     emitState(roomId);
+    broadcastBook(roomId);
   });
 };
